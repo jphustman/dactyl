@@ -1,0 +1,7 @@
+interfaces 5.0-Linux_x86_64-gcc3/dactylIUtils.xpt abi=Linux_x86_64-gcc3 platformversion<5.*
+interfaces 5.0-Darwin_x86_64-gcc3/dactylIUtils.xpt abi=Darwin_x86_64-gcc3 platformversion<5.*
+interfaces 5.0-WINNT_x86-msvc/dactylIUtils.xpt abi=WINNT_x86-msvc platformversion<5.*
+
+binary-component 5.0-Linux_x86_64-gcc3/dactyl.so abi=Linux_x86_64-gcc3 platformversion<5.*
+binary-component 5.0-Darwin_x86_64-gcc3/dactyl.so abi=Darwin_x86_64-gcc3 platformversion<5.*
+binary-component 5.0-WINNT_x86-msvc/dactyl.dll abi=WINNT_x86-msvc platformversion<5.*

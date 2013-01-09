@@ -1,0 +1,2 @@
+manifest 9.0-Linux_x86_64-gcc3/components.manifest abi=Linux_x86_64-gcc3 platformversion<9.*
+manifest 9.0-Darwin_x86_64-gcc3/components.manifest abi=Darwin_x86_64-gcc3 platformversion<9.*

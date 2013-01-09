@@ -1,0 +1,3 @@
+manifest 7.0-Linux_x86_64-gcc3/components.manifest abi=Linux_x86_64-gcc3 appversion<7.*
+manifest 7.0-Darwin_x86_64-gcc3/components.manifest abi=Darwin_x86_64-gcc3 appversion<7.*
+manifest 7.0-WINNT_x86-msvc/components.manifest abi=WINNT_x86-msvc appversion<7.*

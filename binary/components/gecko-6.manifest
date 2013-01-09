@@ -1,0 +1,2 @@
+manifest 6.0-Linux_x86_64-gcc3/components.manifest abi=Linux_x86_64-gcc3 appversion<6.*
+manifest 6.0-Darwin_x86_64-gcc3/components.manifest abi=Darwin_x86_64-gcc3 appversion<6.*
