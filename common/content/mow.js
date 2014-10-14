@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -37,8 +37,8 @@ var MOW = Module("mow", {
         modules.mow = this;
         let fontSize = DOM(document.documentElement).style.fontSize;
         styles.system.add("font-size", "dactyl://content/buffer.xhtml",
-                          "body { font-size: " + fontSize + "; } \
-                           html|html > xul|scrollbar { visibility: collapse !important; }",
+                          // "body { font-size: " + fontSize + "; } \
+                          "html|html > xul|scrollbar { visibility: collapse !important; }",
                           true);
 
         overlay.overlayWindow(window, {
@@ -90,14 +90,14 @@ var MOW = Module("mow", {
 
         if (modes.main != modes.OUTPUT_MULTILINE) {
             modes.push(modes.OUTPUT_MULTILINE, null, {
-                onKeyPress: this.closure.onKeyPress,
+                onKeyPress: this.bound.onKeyPress,
 
-                leave: this.closure(function leave(stack) {
+                leave: stack => {
                     if (stack.pop)
                         for (let message in values(this.messages))
                             if (message.leave)
                                 message.leave(stack);
-                }),
+                },
 
                 window: this.window
             });
@@ -149,7 +149,7 @@ var MOW = Module("mow", {
 
     events: {
         click: function onClick(event) {
-            if (event.getPreventDefault())
+            if (event.defaultPrevented)
                 return;
 
             const openLink = function openLink(where) {
@@ -157,7 +157,7 @@ var MOW = Module("mow", {
                 dactyl.open(event.target.href, where);
             };
 
-            if (event.target instanceof HTMLAnchorElement)
+            if (event.target instanceof Ci.nsIDOMHTMLAnchorElement)
                 switch (DOM.Event.stringify(event)) {
                 case "<LeftMouse>":
                     openLink(dactyl.CURRENT_TAB);
@@ -184,7 +184,8 @@ var MOW = Module("mow", {
 
     windowEvents: {
         resize: function onResize(event) {
-            this._resize.tell();
+            if (event.target == window)
+                this._resize.tell();
         }
     },
 
@@ -192,14 +193,14 @@ var MOW = Module("mow", {
         popupshowing: function onPopupShowing(event) {
             let menu = commandline.widgets.contextMenu;
             let enabled = {
-                link: window.document.popupNode instanceof HTMLAnchorElement,
+                link: window.document.popupNode instanceof Ci.nsIDOMHTMLAnchorElement,
                 path: window.document.popupNode.hasAttribute("path"),
                 selection: !window.document.commandDispatcher.focusedWindow.getSelection().isCollapsed
             };
 
             for (let node in array.iterValues(menu.children)) {
                 let group = node.getAttributeNS(NS, "group");
-                node.hidden = group && !group.split(/\s+/).every(function (g) enabled[g]);
+                node.hidden = group && !group.split(/\s+/).every(g => enabled[g]);
             }
         }
     },
@@ -346,36 +347,36 @@ var MOW = Module("mow", {
 
         bind(["j", "<C-e>", "<Down>"], "Scroll down one line",
              function ({ count }) { mow.scrollVertical("lines", 1 * (count || 1)); },
-             function () mow.canScroll(1), BEEP);
+             () => mow.canScroll(1), BEEP);
 
         bind(["k", "<C-y>", "<Up>"], "Scroll up one line",
              function ({ count }) { mow.scrollVertical("lines", -1 * (count || 1)); },
-             function () mow.canScroll(-1), BEEP);
+             () => mow.canScroll(-1), BEEP);
 
         bind(["<C-j>", "<C-m>", "<Return>"], "Scroll down one line, exit on last line",
              function ({ count }) { mow.scrollVertical("lines", 1 * (count || 1)); },
-             function () mow.canScroll(1), DROP);
+             () => mow.canScroll(1), DROP);
 
         // half page down
         bind(["<C-d>"], "Scroll down half a page",
              function ({ count }) { mow.scrollVertical("pages", .5 * (count || 1)); },
-             function () mow.canScroll(1), BEEP);
+             () => mow.canScroll(1), BEEP);
 
         bind(["<C-f>", "<PageDown>"], "Scroll down one page",
              function ({ count }) { mow.scrollVertical("pages", 1 * (count || 1)); },
-             function () mow.canScroll(1), BEEP);
+             () => mow.canScroll(1), BEEP);
 
         bind(["<Space>"], "Scroll down one page",
              function ({ count }) { mow.scrollVertical("pages", 1 * (count || 1)); },
-             function () mow.canScroll(1), DROP);
+             () => mow.canScroll(1), DROP);
 
         bind(["<C-u>"], "Scroll up half a page",
              function ({ count }) { mow.scrollVertical("pages", -.5 * (count || 1)); },
-             function () mow.canScroll(-1), BEEP);
+             () => mow.canScroll(-1), BEEP);
 
         bind(["<C-b>", "<PageUp>"], "Scroll up half a page",
              function ({ count }) { mow.scrollVertical("pages", -1 * (count || 1)); },
-             function () mow.canScroll(-1), BEEP);
+             () => mow.canScroll(-1), BEEP);
 
         bind(["gg"], "Scroll to the beginning of output",
              function () { mow.scrollToPercent(null, 0); });
@@ -390,7 +391,7 @@ var MOW = Module("mow", {
         // close the window
         bind(["q"], "Close the output window",
              function () {},
-             function () false, DROP);
+             () => false, DROP);
     },
     options: function initOptions() {
         options.add(["more"],
@@ -399,4 +400,4 @@ var MOW = Module("mow", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

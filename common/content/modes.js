@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -21,13 +21,7 @@ var Modes = Module("modes", {
         this._recording = false;
         this._replaying = false; // playing a macro
 
-        this._modeStack = update([], {
-            pop: function pop() {
-                if (this.length <= 1)
-                    throw Error("Trying to pop last element in mode stack");
-                return pop.superapply(this, arguments);
-            }
-        });
+        this._modeStack = Modes.ModeStack([]);
 
         this._modes = [];
         this._mainModes = [];
@@ -119,7 +113,11 @@ var Modes = Module("modes", {
             onKeyPress: function (events) { if (modes.main == modes.QUOTE) modes.pop(); }
         });
         this.addMode("IGNORE", { hidden: true }, {
-            onKeyPress: function (events) false,
+            onKeyPress: function (events_) {
+                if (events.isCancelKey(DOM.Event.stringify(events_[0])))
+                    return true;
+                return false;
+            },
             bases: [],
             passthrough: true
         });
@@ -233,7 +231,7 @@ var Modes = Module("modes", {
         if (this._modeMap[mode.mode] == mode)
             delete this._modeMap[mode.mode];
 
-        this._mainModes = this._mainModes.filter(function (m) m != mode);
+        this._mainModes = this._mainModes.filter(m => m != mode);
     },
 
     dumpStack: function dumpStack() {
@@ -250,30 +248,31 @@ var Modes = Module("modes", {
 
     getCharModes: function getCharModes(chr) (this.modeChars[chr] || []).slice(),
 
-    have: function have(mode) this._modeStack.some(function (m) isinstance(m.main, mode)),
+    have: function have(mode) this._modeStack.some(m => isinstance(m.main, mode)),
 
     matchModes: function matchModes(obj)
-        this._modes.filter(function (mode) Object.keys(obj)
-                                                 .every(function (k) obj[k] == (mode[k] || false))),
+        this._modes.filter(mode => Object.keys(obj)
+                                         .every(k => obj[k] == (mode[k] || false))),
 
     // show the current mode string in the command line
     show: function show() {
-        if (!loaded.modes)
+        if (!loaded.has("modes"))
             return;
 
         let msg = this._getModeMessage();
 
-        if (msg || loaded.commandline)
+        if (msg || loaded.has("commandline"))
             commandline.widgets.mode = msg || null;
     },
 
     remove: function remove(mode, covert) {
         if (covert && this.topOfStack.main != mode) {
             util.assert(mode != this.NORMAL);
-            for (let m; m = array.nth(this.modeStack, function (m) m.main == mode, 0);)
-                this._modeStack.splice(this._modeStack.indexOf(m));
+
+            this._modeStack = Modes.ModeStack(
+                this._modeStack.filter(m => m.main != mode));
         }
-        else if (this.stack.some(function (m) m.main == mode)) {
+        else if (this.stack.some(m => m.main == mode)) {
             this.pop(mode);
             this.pop();
         }
@@ -330,10 +329,11 @@ var Modes = Module("modes", {
                                       { push: push }, push);
 
                 for (let [id, { obj, prop, test }] in Iterator(this.boundProperties)) {
-                    if (!obj.get())
+                    obj = obj.get();
+                    if (!obj)
                         delete this.boundProperties[id];
                     else
-                        this.topOfStack.saved[id] = { obj: obj.get(), prop: prop, value: obj.get()[prop], test: test };
+                        this.topOfStack.saved[id] = { obj: obj, prop: prop, value: obj[prop], test: test };
                 }
             }
 
@@ -357,7 +357,9 @@ var Modes = Module("modes", {
                               push ? { push: push } : stack || {},
                               prev);
 
-        delayed.forEach(function ([fn, self]) dactyl.trapErrors(fn, self));
+        delayed.forEach(([fn, self]) => {
+            dactyl.trapErrors(fn, self);
+        });
 
         dactyl.triggerObserver("modes.change", [oldMain, oldExtended], [this._main, this._extended], stack);
         this.show();
@@ -421,8 +423,8 @@ var Modes = Module("modes", {
     Mode: Class("Mode", {
         init: function init(name, options, params) {
             if (options.bases)
-                util.assert(options.bases.every(function (m) m instanceof this, this.constructor),
-                           _("mode.invalidBases"), false);
+                util.assert(options.bases.every(m => m instanceof this.constructor),
+                            _("mode.invalidBases"), false);
 
             this.update({
                 id: 1 << Modes.Mode._id++,
@@ -440,9 +442,11 @@ var Modes = Module("modes", {
             this.allBases.indexOf(obj) >= 0 || callable(obj) && this instanceof obj,
 
         allBases: Class.Memoize(function () {
-            let seen = {}, res = [], queue = [this].concat(this.bases);
+            let seen = RealSet(),
+                res = [],
+                queue = [this].concat(this.bases);
             for (let mode in array.iterValues(queue))
-                if (!Set.add(seen, mode)) {
+                if (!seen.add(mode)) {
                     res.push(mode);
                     queue.push.apply(queue, mode.bases);
                 }
@@ -461,11 +465,11 @@ var Modes = Module("modes", {
 
         hidden: false,
 
-        input: Class.Memoize(function input() this.insert || this.bases.length && this.bases.some(function (b) b.input)),
+        input: Class.Memoize(function input() this.insert || this.bases.length && this.bases.some(b => b.input)),
 
-        insert: Class.Memoize(function insert() this.bases.length && this.bases.some(function (b) b.insert)),
+        insert: Class.Memoize(function insert() this.bases.length && this.bases.some(b => b.insert)),
 
-        ownsFocus: Class.Memoize(function ownsFocus() this.bases.length && this.bases.some(function (b) b.ownsFocus)),
+        ownsFocus: Class.Memoize(function ownsFocus() this.bases.length && this.bases.some(b => b.ownsFocus)),
 
         passEvent: function passEvent(event) this.input && event.charCode && !(event.ctrlKey || event.altKey || event.metaKey),
 
@@ -479,27 +483,35 @@ var Modes = Module("modes", {
     }, {
         _id: 0
     }),
+    ModeStack: function ModeStack(array)
+        update(array, {
+            pop: function pop() {
+                if (this.length <= 1)
+                    throw Error("Trying to pop last element in mode stack");
+                return pop.superapply(this, arguments);
+            }
+        }),
     StackElement: (function () {
         const StackElement = Struct("main", "extended", "params", "saved");
         StackElement.className = "Modes.StackElement";
         StackElement.defaultValue("params", function () this.main.params);
 
         update(StackElement.prototype, {
-            get toStringParams() !loaded.modes ? this.main.name : [
+            get toStringParams() !loaded.has("modes") ? [this.main.name] : [
                 this.main.name,
-                ["(", modes.all.filter(function (m) this.extended & m, this)
-                           .map(function (m) m.name).join("|"),
+                ["(", modes.all.filter(m => this.extended & m)
+                               .map(m => m.name)
+                               .join("|"),
                  ")"].join("")
             ]
         });
         return StackElement;
     })(),
     cacheId: 0,
-    boundProperty: function BoundProperty(desc) {
+    boundProperty: function BoundProperty(desc={}) {
         let id = this.cacheId++;
         let value;
 
-        desc = desc || {};
         return Class.Property(update({
             configurable: true,
             enumerable: true,
@@ -521,7 +533,7 @@ var Modes = Module("modes", {
 }, {
     cache: function initCache() {
         function makeTree() {
-            let list = modes.all.filter(function (m) m.name !== m.description);
+            let list = modes.all.filter(m => m.name !== m.description);
 
             let tree = {};
 
@@ -554,9 +566,10 @@ var Modes = Module("modes", {
             return rec(roots);
         }
 
-        cache.register("modes.dtd", function ()
-            util.makeDTD(iter({ "modes.tree": makeTree() },
-                              config.dtd)));
+        cache.register("modes.dtd",
+            () => util.makeDTD(iter({ "modes.tree": makeTree() },
+                                    config.dtd)),
+            true);
     },
     mappings: function initMappings() {
         mappings.add([modes.BASE, modes.NORMAL],
@@ -595,27 +608,31 @@ var Modes = Module("modes", {
 
             getKey: function getKey(val, default_) {
                 if (isArray(val))
-                    return (array.nth(this.value, function (v) val.some(function (m) m.name === v.mode), 0)
+                    return (this.value.find(v => val.some(m => m.name === v.mode))
                                 || { result: default_ }).result;
 
-                return Set.has(this.valueMap, val) ? this.valueMap[val] : default_;
+                return hasOwnProperty(this.valueMap, val) ? this.valueMap[val] : default_;
             },
 
             setter: function (vals) {
-                modes.all.forEach(function (m) { delete m.passUnknown });
+                modes.all.forEach(function (m) { delete m.passUnknown; });
 
-                vals = vals.map(function (v) update(new String(v.toLowerCase()), {
-                    mode: v.replace(/^!/, "").toUpperCase(),
-                    result: v[0] !== "!"
-                }));
+                vals = vals.map(v => update(new String(v.toLowerCase()),
+                                            {
+                                                mode: v.replace(/^!/, "").toUpperCase(),
+                                                result: v[0] !== "!"
+                                            }));
 
-                this.valueMap = values(vals).map(function (v) [v.mode, v.result]).toObject();
+                this.valueMap = values(vals).map(v => [v.mode, v.result])
+                                            .toObject();
                 return vals;
             },
 
-            validator: function validator(vals) vals.map(function (v) v.replace(/^!/, "")).every(Set.has(this.values)),
+            validator: function validator(vals) vals.map(v => v.replace(/^!/, ""))
+                                                    .every(k => hasOwnProperty(this.values, k)),
 
-            get values() array.toObject([[m.name.toLowerCase(), m.description] for (m in values(modes._modes)) if (!m.hidden)])
+            get values() array.toObject([[m.name.toLowerCase(), m.description]
+                                         for (m in values(modes._modes)) if (!m.hidden)])
         };
 
         options.add(["passunknown", "pu"],
@@ -630,8 +647,8 @@ var Modes = Module("modes", {
     },
     prefs: function initPrefs() {
         prefs.watch("accessibility.browsewithcaret",
-                    function () { modes.onCaretChange.apply(modes, arguments) });
+                    function () { modes.onCaretChange.apply(modes, arguments); });
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

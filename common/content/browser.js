@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -16,11 +16,17 @@ var Browser = Module("browser", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), 
         this.cleanupProgressListener = overlay.overlayObject(window.XULBrowserWindow,
                                                              this.progressListener);
         util.addObserver(this);
+
+        this._unoverlay = overlay.overlayObject(FullZoom, {
+            get siteSpecific() false,
+            set siteSpecific(val) {}
+        });
     },
 
     destroy: function () {
         this.cleanupProgressListener();
         this.observe.unregister();
+        this._unoverlay();
     },
 
     observers: {
@@ -66,7 +72,7 @@ var Browser = Module("browser", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), 
     events: {
         DOMContentLoaded: function onDOMContentLoaded(event) {
             let doc = event.originalTarget;
-            if (doc instanceof HTMLDocument)
+            if (doc instanceof Ci.nsIDOMHTMLDocument)
                 this._triggerLoadAutocmd("DOMLoad", doc);
         },
 
@@ -75,10 +81,10 @@ var Browser = Module("browser", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), 
         // page is loaded in a background tab
         load: function onLoad(event) {
             let doc = event.originalTarget;
-            if (doc instanceof Document)
+            if (doc instanceof Ci.nsIDOMDocument)
                 dactyl.initDocument(doc);
 
-            if (doc instanceof HTMLDocument) {
+            if (doc instanceof Ci.nsIDOMHTMLDocument) {
                 if (doc.defaultView.frameElement) {
                     // document is part of a frameset
 
@@ -193,8 +199,8 @@ var Browser = Module("browser", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), 
             function (args) { dactyl.open(args[0] || "about:blank"); },
             {
                 completer: function (context) completion.url(context),
-                domains: function (args) array.compact(dactyl.parseURLs(args[0] || "").map(
-                    function (url) util.getHost(url))),
+                domains: function (args) array.compact(dactyl.parseURLs(args[0] || "")
+                                                             .map(url => util.getHost(url))),
                 literal: 0,
                 privateData: true
             });
@@ -222,7 +228,7 @@ var Browser = Module("browser", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), 
             if (dactyl.forceTarget in openModes)
                 mode = openModes[dactyl.forceTarget];
 
-            CommandExMode().open(mode + "open " + (args || ""))
+            CommandExMode().open(mode + "open " + (args || ""));
         }
 
         function decode(uri) util.losslessDecodeURI(uri)
@@ -282,4 +288,4 @@ var Browser = Module("browser", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), 
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

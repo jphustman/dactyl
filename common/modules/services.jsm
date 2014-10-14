@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -8,8 +8,13 @@ try {
 
 var global = this;
 defineModule("services", {
-    exports: ["services"]
+    exports: ["PrivateBrowsingUtils", "services"]
 });
+
+try {
+    var { PrivateBrowsingUtils } = Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+}
+catch (e) {}
 
 /**
  * A lazily-instantiated XPCOM class and service cache.
@@ -27,28 +32,27 @@ var Services = Module("Services", {
         this.add("appStartup",          "@mozilla.org/toolkit/app-startup;1",               "nsIAppStartup");
         this.add("bookmarks",           "@mozilla.org/browser/nav-bookmarks-service;1",     "nsINavBookmarksService");
         this.add("browserSearch",       "@mozilla.org/browser/search-service;1",            "nsIBrowserSearchService");
-        this.add("cache",               "@mozilla.org/network/cache-service;1",             "nsICacheService");
-        this.add("charset",             "@mozilla.org/charset-converter-manager;1",         "nsICharsetConverterManager");
+        this.add("cache",               "@mozilla.org/netwerk/cache-storage-service;1",     "nsICacheStorageService");
         this.add("chromeRegistry",      "@mozilla.org/chrome/chrome-registry;1",            "nsIXULChromeRegistry");
         this.add("clipboard",           "@mozilla.org/widget/clipboard;1",                  "nsIClipboard");
         this.add("clipboardHelper",     "@mozilla.org/widget/clipboardhelper;1",            "nsIClipboardHelper");
         this.add("commandLineHandler",  "@mozilla.org/commandlinehandler/general-startup;1?type=dactyl");
         this.add("console",             "@mozilla.org/consoleservice;1",                    "nsIConsoleService");
-        this.add("contentPrefs",        "@mozilla.org/content-pref/service;1",              "nsIContentPrefService");
+        this.add("contentPrefs",        "@mozilla.org/content-pref/service;1",              ["nsIContentPrefService",
+                                                                                             "nsIContentPrefService2"]);
         this.add("dactyl",              "@dactyl.googlecode.com/extra/utils",               "dactylIUtils");
         this.add("dactyl:",             this.PROTOCOL + "dactyl");
-        this.add("debugger",            "@mozilla.org/js/jsd/debugger-service;1",           "jsdIDebuggerService");
         this.add("directory",           "@mozilla.org/file/directory_service;1",            "nsIProperties");
         this.add("downloadManager",     "@mozilla.org/download-manager;1",                  "nsIDownloadManager");
         this.add("environment",         "@mozilla.org/process/environment;1",               "nsIEnvironment");
         this.add("extensionManager",    "@mozilla.org/extensions/manager;1",                "nsIExtensionManager");
-        this.add("externalApp",         "@mozilla.org/uriloader/external-helper-app-service;1", "nsPIExternalAppLauncher")
+        this.add("externalApp",         "@mozilla.org/uriloader/external-helper-app-service;1", "nsPIExternalAppLauncher");
         this.add("externalProtocol",    "@mozilla.org/uriloader/external-protocol-service;1", "nsIExternalProtocolService");
         this.add("favicon",             "@mozilla.org/browser/favicon-service;1",           "nsIFaviconService");
         this.add("file:",               this.PROTOCOL + "file",                             "nsIFileProtocolHandler");
         this.add("focus",               "@mozilla.org/focus-manager;1",                     "nsIFocusManager");
-        this.add("history",             "@mozilla.org/browser/global-history;2",
-                 ["nsIBrowserHistory", "nsIGlobalHistory2", "nsINavHistoryService", "nsPIPlacesDatabase"]);
+        this.add("history",             "@mozilla.org/browser/nav-history-service;1",
+                 ["nsIBrowserHistory", "nsINavHistoryService", "nsPIPlacesDatabase"]);
         this.add("io",                  "@mozilla.org/network/io-service;1",                "nsIIOService");
         this.add("json",                "@mozilla.org/dom/json;1",                          "nsIJSON", "createInstance");
         this.add("listeners",           "@mozilla.org/eventlistenerservice;1",              "nsIEventListenerService");
@@ -57,6 +61,7 @@ var Services = Module("Services", {
         this.add("mime",                "@mozilla.org/mime;1",                              "nsIMIMEService");
         this.add("observer",            "@mozilla.org/observer-service;1",                  "nsIObserverService");
         this.add("pref",                "@mozilla.org/preferences-service;1",               ["nsIPrefBranch2", "nsIPrefService"]);
+        this.add("printSettings",       "@mozilla.org/gfx/printsettings-service;1",         "nsIPrintSettingsService");
         this.add("privateBrowsing",     "@mozilla.org/privatebrowsing;1",                   "nsIPrivateBrowsingService");
         this.add("profile",             "@mozilla.org/toolkit/profile-service;1",           "nsIToolkitProfileService");
         this.add("resource:",           this.PROTOCOL + "resource",                         ["nsIProtocolHandler", "nsIResProtocolHandler"]);
@@ -94,7 +99,7 @@ var Services = Module("Services", {
         this.addClass("Persist",      "@mozilla.org/embedding/browser/nsWebBrowserPersist;1", "nsIWebBrowserPersist");
         this.addClass("Pipe",         "@mozilla.org/pipe;1",                       "nsIPipe", "init");
         this.addClass("Process",      "@mozilla.org/process/util;1",               "nsIProcess", "init");
-        this.addClass("Pump",         "@mozilla.org/network/input-stream-pump;1",  "nsIInputStreamPump", "init")
+        this.addClass("Pump",         "@mozilla.org/network/input-stream-pump;1",  "nsIInputStreamPump", "init");
         this.addClass("StreamChannel","@mozilla.org/network/input-stream-channel;1",
                       ["nsIInputStreamChannel", "nsIChannel"], "setURI");
         this.addClass("StreamCopier", "@mozilla.org/network/async-stream-copier;1","nsIAsyncStreamCopier", "init");
@@ -106,7 +111,7 @@ var Services = Module("Services", {
         this.addClass("URL",          "@mozilla.org/network/standard-url;1",       ["nsIStandardURL", "nsIURL"], "init");
         this.addClass("Xmlhttp",      "@mozilla.org/xmlextras/xmlhttprequest;1",   [], "open");
         this.addClass("XPathEvaluator", "@mozilla.org/dom/xpath-evaluator;1",      "nsIDOMXPathEvaluator");
-        this.addClass("XMLDocument",  "@mozilla.org/xml/xml-document;1",           ["nsIDOMXMLDocument", "nsIDOMNodeSelector"]);
+        this.addClass("XMLDocument",  "@mozilla.org/xml/xml-document;1",           "nsIDOMXMLDocument");
         this.addClass("XMLSerializer","@mozilla.org/xmlextras/xmlserializer;1",    ["nsIDOMSerializer"]);
         this.addClass("ZipReader",    "@mozilla.org/libjar/zip-reader;1",          "nsIZipReader", "open", false);
         this.addClass("ZipWriter",    "@mozilla.org/zipwriter;1",                  "nsIZipWriter", "open", false);
@@ -121,7 +126,8 @@ var Services = Module("Services", {
             if (!service.interfaces.length)
                 return res.wrappedJSObject || res;
 
-            service.interfaces.forEach(function (iface) res.QueryInterface(Ci[iface]));
+            service.interfaces.forEach(iface => { res instanceof Ci[iface]; });
+
             if (service.init && args.length) {
                 if (service.callable)
                     res[service.init].apply(res, args);
@@ -134,7 +140,7 @@ var Services = Module("Services", {
             if (service.quiet === false)
                 throw e.stack ? e : Error(e);
 
-            if (typeof util !== "undefined")
+            if (typeof util !== "undefined" && util != null)
                 util.reportError(e);
             else
                 dump("dactyl: Service creation failed for '" + service.class + "': " + e + "\n" + (e.stack || Error(e).stack));
@@ -157,7 +163,7 @@ var Services = Module("Services", {
         this.services[name] = { method: meth, class: class_, interfaces: Array.concat(ifaces || []) };
         if (name in this && ifaces && !this.__lookupGetter__(name) && !(this[name] instanceof Ci.nsISupports))
             throw TypeError();
-        memoize(this, name, function () self._create(name));
+        memoize(this, name, () => self._create(name));
     },
 
     /**
@@ -171,14 +177,13 @@ var Services = Module("Services", {
      *     class.
      */
     addClass: function addClass(name, class_, ifaces, init, quiet) {
-        const self = this;
         this.services[name] = { class: class_, interfaces: Array.concat(ifaces || []), method: "createInstance", init: init, quiet: quiet };
         if (init)
             memoize(this.services[name], "callable",
                     function () callable(XPCOMShim(this.interfaces)[this.init]));
 
-        this[name] = function Create() self._create(name, arguments);
-        update.apply(null, [this[name]].concat([Ci[i] for each (i in Array.concat(ifaces))]));
+        this[name] = (function Create() this._create(name, arguments)).bind(this);
+        update.apply(null, [this[name]].concat([Ci[i] for (i of Array.concat(ifaces))]));
         return this[name];
     },
 
@@ -201,12 +206,12 @@ var Services = Module("Services", {
      *
      * @param {string} name The service's cache key.
      */
-    has: function has(name) Set.has(this.services, name) && this.services[name].class in Cc &&
-        this.services[name].interfaces.every(function (iface) iface in Ci)
+    has: function has(name) hasOwnProperty(this.services, name) && this.services[name].class in Cc &&
+        this.services[name].interfaces.every(iface => iface in Ci)
 });
 
 endModule();
 
 } catch(e){dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack);}
 
-// vim: set fdm=marker sw=4 sts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

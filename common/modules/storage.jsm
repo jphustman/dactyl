@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -6,37 +6,19 @@
 
 defineModule("storage", {
     exports: ["File", "Storage", "storage"],
-    require: ["services", "util"]
+    require: ["promises", "services", "util"]
 });
 
 lazyRequire("config", ["config"]);
 lazyRequire("io", ["IO"]);
 lazyRequire("overlay", ["overlay"]);
 
+lazyRequire("resource://gre/modules/osfile.jsm", ["OS"]);
+
 var win32 = /^win(32|nt)$/i.test(services.runtime.OS);
 var myObject = JSON.parse("{}").constructor;
 
-function loadData(name, store, type) {
-    try {
-        let file = storage.infoPath.child(name);
-        if (file.exists()) {
-            let data = file.read();
-            let result = JSON.parse(data);
-            if (result instanceof type)
-                return result;
-        }
-    }
-    catch (e) {
-        util.reportError(e);
-    }
-}
-
-function saveData(obj) {
-    if (obj.privateData && storage.privateMode)
-        return;
-    if (obj.store && storage.infoPath)
-        storage.infoPath.child(obj.name).write(obj.serial);
-}
+var global = Cu.getGlobalForObject(this);
 
 var StoreBase = Class("StoreBase", {
     OPTIONS: ["privateData", "replacer"],
@@ -45,18 +27,34 @@ var StoreBase = Class("StoreBase", {
 
     get serial() JSON.stringify(this._object, this.replacer),
 
-    init: function (name, store, load, options) {
+    init: function init(name, store, load, options) {
         this._load = load;
+        this._options = options;
 
-        this.__defineGetter__("store", function () store);
-        this.__defineGetter__("name", function () name);
+        this.__defineGetter__("store", () => store);
+        this.__defineGetter__("name", () => name);
         for (let [k, v] in Iterator(options))
             if (this.OPTIONS.indexOf(k) >= 0)
                 this[k] = v;
         this.reload();
     },
 
-    changed: function () { this.timer.tell(); },
+    clone: function clone(storage) {
+        let store = storage.privateMode ? false : this.store;
+        let res = this.constructor(this.name, store, this._load, this._options);
+        res.storage = storage;
+        return res;
+    },
+
+    makeOwn: function makeOwn(val) {
+        if (typeof val != "object")
+            return val;
+        if (Cu.getGlobalForObject(val) == global)
+            return val;
+        return JSON.parse(JSON.stringify(val, this.replacer));
+    },
+
+    changed: function () { this.timer && this.timer.tell(); },
 
     reload: function reload() {
         this._object = this._load() || this._constructor();
@@ -66,10 +64,11 @@ var StoreBase = Class("StoreBase", {
     delete: function delete_() {
         delete storage.keys[this.name];
         delete storage[this.name];
-        storage.infoPath.child(this.name).remove(false);
+        return OS.File.remove(
+            storage.infoPath.child(this.name).path);
     },
 
-    save: function () { saveData(this); },
+    save: function () { (self.storage || storage)._saveData(this); },
 
     __iterator__: function () Iterator(this._object)
 });
@@ -81,7 +80,7 @@ var ArrayStore = Class("ArrayStore", StoreBase, {
 
     set: function set(index, value, quiet) {
         var orig = this._object[index];
-        this._object[index] = value;
+        this._object[index] = this.makeOwn(value);
         if (!quiet)
             this.fireEvent("change", index);
 
@@ -89,7 +88,7 @@ var ArrayStore = Class("ArrayStore", StoreBase, {
     },
 
     push: function push(value) {
-        this._object.push(value);
+        this._object.push(this.makeOwn(value));
         this.fireEvent("push", this._object.length);
     },
 
@@ -110,6 +109,7 @@ var ArrayStore = Class("ArrayStore", StoreBase, {
     },
 
     insert: function insert(value, ord) {
+        value = this.makeOwn(value);
         if (ord == 0)
             this._object.unshift(value);
         else
@@ -134,7 +134,8 @@ var ArrayStore = Class("ArrayStore", StoreBase, {
     mutate: function mutate(funcName) {
         var _funcName = funcName;
         arguments[0] = this._object;
-        this._object = Array[_funcName].apply(Array, arguments);
+        this._object = Array[_funcName].apply(Array, arguments)
+                                       .map(this.makeOwn.bind(this));
         this.fireEvent("change", null);
     },
 
@@ -150,10 +151,12 @@ var ObjectStore = Class("ObjectStore", StoreBase, {
     },
 
     get: function get(key, default_) {
-        return key in this._object  ? this._object[key] :
+        return this.has(key)        ? this._object[key] :
                arguments.length > 1 ? this.set(key, default_) :
                                       undefined;
     },
+
+    has: function has(key) hasOwnProperty(this._object, key),
 
     keys: function keys() Object.keys(this._object),
 
@@ -167,7 +170,7 @@ var ObjectStore = Class("ObjectStore", StoreBase, {
     set: function set(key, val) {
         var defined = key in this._object;
         var orig = this._object[key];
-        this._object[key] = val;
+        this._object[key] = this.makeOwn(val);
         if (!defined)
             this.fireEvent("add", key);
         else if (orig != val)
@@ -176,9 +179,15 @@ var ObjectStore = Class("ObjectStore", StoreBase, {
     }
 });
 
-var sessionGlobal = Cu.import("resource://gre/modules/Services.jsm", {})
+var sessionGlobal = Cu.import("resource://gre/modules/Services.jsm", {});
 
 var Storage = Module("Storage", {
+    Local: function Local(dactyl, modules, window) ({
+        init: function init() {
+            this.privateMode = PrivateBrowsingUtils.isWindowPrivate(window);
+        }
+    }),
+
     alwaysReload: {},
 
     init: function init() {
@@ -203,6 +212,34 @@ var Storage = Module("Storage", {
         this.observers = {};
     },
 
+    _loadData: function loadData(name, store, type) {
+        try {
+            let file = storage.infoPath.child(name);
+            if (file.exists()) {
+                let data = file.read();
+                let result = JSON.parse(data);
+                if (result instanceof type)
+                    return result;
+            }
+        }
+        catch (e) {
+            util.reportError(e);
+        }
+    },
+
+    _saveData: promises.task(function saveData(obj) {
+        if (obj.privateData && storage.privateMode)
+            return;
+        if (obj.store && storage.infoPath) {
+            var { path } = storage.infoPath.child(obj.name);
+            yield OS.File.makeDir(storage.infoPath.path,
+                                  { ignoreExisting: true });
+            yield OS.File.writeAtomic(
+                path, obj.serial,
+                { tmpPath: path + ".part" });
+        }
+    }),
+
     storeForSession: function storeForSession(key, val) {
         if (val)
             this.session[key] = sessionGlobal.JSON.parse(JSON.stringify(val));
@@ -210,7 +247,7 @@ var Storage = Module("Storage", {
             delete this.dactylSession[key];
     },
 
-    infoPath: Class.Memoize(function ()
+    infoPath: Class.Memoize(() =>
         File(IO.runtimePath.replace(/,.*/, ""))
             .child("info").child(config.profileName)),
 
@@ -222,76 +259,77 @@ var Storage = Module("Storage", {
                 this[key].timer.flush();
             delete this[key];
             delete this.keys[key];
-            this.infoPath.child(key).remove(false);
+            return OS.File.remove(
+                this.infoPath.child(key).path);
         }
     },
 
-    newObject: function newObject(key, constructor, params) {
+    newObject: function newObject(key, constructor, params={}) {
         if (params == null || !isObject(params))
             throw Error("Invalid argument type");
 
-        if (!(key in this.keys) || params.reload || this.alwaysReload[key]) {
-            if (key in this && !(params.reload || this.alwaysReload[key]))
-                throw Error();
-            let load = function () loadData(key, params.store, params.type || myObject);
+        if (this.isLocalModule) {
+            this.globalInstance.newObject.apply(this.globalInstance, arguments);
+
+            if (!(key in this.keys) && this.privateMode && key in this.globalInstance.keys) {
+                let obj = this.globalInstance.keys[key];
+                this.keys[key] = this._privatize(obj);
+            }
+
+            return this.keys[key];
+        }
+
+        let reload = params.reload || this.alwaysReload[key];
+        if (!(key in this.keys) || reload) {
+            if (key in this && !reload)
+                throw Error("Cannot add storage key with that name.");
+
+            let load = () => this._loadData(key, params.store, params.type || myObject);
 
             this.keys[key] = new constructor(key, params.store, load, params);
-            this.keys[key].timer = new Timer(1000, 10000, function () storage.save(key));
+            this.keys[key].timer = new Timer(1000, 10000, () => this.save(key));
             this.__defineGetter__(key, function () this.keys[key]);
         }
         return this.keys[key];
     },
 
-    newMap: function newMap(key, options) {
+    newMap: function newMap(key, options={}) {
         return this.newObject(key, ObjectStore, options);
     },
 
-    newArray: function newArray(key, options) {
+    newArray: function newArray(key, options={}) {
         return this.newObject(key, ArrayStore, update({ type: Array }, options));
     },
 
-    addObserver: function addObserver(key, callback, ref) {
-        if (ref) {
-            let refs = overlay.getData(ref, "storage-refs");
-            refs.push(callback);
-            var callbackRef = util.weakReference(callback);
-        }
-        else {
-            callbackRef = { get: function () callback };
-        }
-        this.removeDeadObservers();
-        if (!(key in this.observers))
-            this.observers[key] = [];
-        if (!this.observers[key].some(function (o) o.callback.get() == callback))
-            this.observers[key].push({ ref: ref && Cu.getWeakReference(ref), callback: callbackRef });
+    get observerMaps() {
+        yield this.observers;
+        for (let window of overlay.windows)
+            yield overlay.getData(window, "storage-observers", Object);
+    },
+
+    addObserver: function addObserver(key, callback, window) {
+        var { observers } = this;
+        if (window instanceof Ci.nsIDOMWindow)
+            observers = overlay.getData(window, "storage-observers", Object);
+
+        if (!hasOwnProperty(observers, key))
+            observers[key] = RealSet();
+
+        observers[key].add(callback);
     },
 
     removeObserver: function (key, callback) {
-        this.removeDeadObservers();
-        if (!(key in this.observers))
-            return;
-        this.observers[key] = this.observers[key].filter(function (elem) elem.callback.get() != callback);
-        if (this.observers[key].length == 0)
-            delete obsevers[key];
-    },
-
-    removeDeadObservers: function () {
-        for (let [key, ary] in Iterator(this.observers)) {
-            this.observers[key] = ary = ary.filter(function (o) o.callback.get()
-                                                             && (!o.ref || o.ref.get()
-                                                                        && overlay.getData(o.ref.get(), "storage-refs", null)));
-            if (!ary.length)
-                delete this.observers[key];
-        }
+        for (let observers in this.observerMaps)
+            if (key in observers)
+                observers[key].remove(callback);
     },
 
     fireEvent: function fireEvent(key, event, arg) {
-        this.removeDeadObservers();
-        if (key in this.observers)
-            // Safe, since we have our own Array object here.
-            for each (let observer in this.observers[key])
-                observer.callback.get()(key, event, arg);
-        if (key in this.keys)
+        for (let observers in this.observerMaps)
+            for (let observer of observers[key] || [])
+                observer(key, event, arg);
+
+        if (key in this.keys && this.keys[key].timer)
             this[key].timer.tell();
     },
 
@@ -302,32 +340,46 @@ var Storage = Module("Storage", {
 
     save: function save(key) {
         if (this[key])
-            saveData(this.keys[key]);
+            this._saveData(this.keys[key]);
     },
 
     saveAll: function storeAll() {
         for each (let obj in this.keys)
-            saveData(obj);
+            this._saveData(obj);
     },
 
     _privateMode: false,
     get privateMode() this._privateMode,
-    set privateMode(val) {
-        if (val && !this._privateMode)
+    set privateMode(enabled) {
+        this._privateMode = Boolean(enabled);
+
+        if (this.isLocalModule) {
             this.saveAll();
-        if (!val && this._privateMode)
-            for (let key in this.keys)
-                this.load(key);
-        return this._privateMode = Boolean(val);
-    }
+
+            if (!enabled)
+                delete this.keys;
+            else {
+                let { keys } = this;
+                this.keys = {};
+                for (let [k, v] in Iterator(keys))
+                    this.keys[k] = this._privatize(v);
+            }
+        }
+        return this._privateMode;
+    },
+
+    _privatize: function privatize(obj) {
+        if (obj.privateData && obj.clone)
+            return obj.clone(this);
+        return obj;
+    },
 }, {
     Replacer: {
         skipXpcom: function skipXpcom(key, val) val instanceof Ci.nsISupports ? null : val
     }
 }, {
     cleanup: function (dactyl, modules, window) {
-        overlay.setData(window, "storage-refs", null);
-        this.removeDeadObservers();
+        overlay.setData(window, "storage-callbacks", undefined);
     }
 });
 
@@ -372,7 +424,7 @@ var File = Class("File", {
         return this;
     },
 
-    charset: Class.Memoize(function () File.defaultEncoding),
+    charset: Class.Memoize(() => File.defaultEncoding),
 
     /**
      * @property {nsIFileURL} Returns the nsIFileURL object for this file.
@@ -399,10 +451,10 @@ var File = Class("File", {
     /**
      * Returns a new file for the given child of this directory entry.
      */
-    child: function child() {
+    child: function child(...args) {
         let f = this.constructor(this);
-        for (let [, name] in Iterator(arguments))
-            for each (let elem in name.split(File.pathSplit))
+        for (let name of args)
+            for (let elem of name.split(File.pathSplit))
                 f.append(elem);
         return f;
     },
@@ -440,7 +492,8 @@ var File = Class("File", {
 
         let array = [e for (e in this.iterDirectory())];
         if (sort)
-            array.sort(function (a, b) b.isDirectory() - a.isDirectory() || String.localeCompare(a.path, b.path));
+            array.sort((a, b) => (b.isDirectory() - a.isDirectory() ||
+                                  String.localeCompare(a.path, b.path)));
         return array;
     },
 
@@ -491,7 +544,7 @@ var File = Class("File", {
             mode = File.MODE_WRONLY | File.MODE_CREATE | File.MODE_TRUNCATE;
 
         if (!perms)
-            perms = octal(644);
+            perms = 0o644;
         if (!this.exists()) // OCREAT won't create the directory
             this.create(this.NORMAL_FILE_TYPE, perms);
 
@@ -638,10 +691,9 @@ var File = Class("File", {
         // Kris reckons we shouldn't replicate this 'bug'. --djk
         // TODO: should we be doing this for all paths?
         function expand(path) path.replace(
-            !win32 ? /\$(\w+)\b|\${(\w+)}/g
-                   : /\$(\w+)\b|\${(\w+)}|%(\w+)%/g,
-            function (m, n1, n2, n3) getenv(n1 || n2 || n3) || m
-        );
+            win32 ? /\$(\w+)\b|\${(\w+)}|%(\w+)%/g
+                  : /\$(\w+)\b|\${(\w+)}/g,
+            (m, n1, n2, n3) => (getenv(n1 || n2 || n3) || m));
         path = expand(path);
 
         // expand ~
@@ -706,7 +758,6 @@ var File = Class("File", {
         }
     },
 
-
     isAbsolutePath: function isAbsolutePath(path) {
         try {
             services.File().initWithPath(path);
@@ -737,7 +788,7 @@ let (file = services.directory.get("ProfD", Ci.nsIFile)) {
         if (!(prop in File.prototype)) {
             let isFunction;
             try {
-                isFunction = callable(file[prop])
+                isFunction = callable(file[prop]);
             }
             catch (e) {}
 
@@ -758,4 +809,4 @@ endModule();
 
 // catch(e){ dump(e + "\n" + (e.stack || Error().stack)); Components.utils.reportError(e) }
 
-// vim: set fdm=marker sw=4 sts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2011 by Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 by Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -65,7 +65,7 @@ var Option = Class("Option", {
             this.globalValue = this.defaultValue;
     },
 
-    magicalProperties: Set(["cleanupValue"]),
+    magicalProperties: RealSet(["cleanupValue"]),
 
     /**
      * @property {string} This option's description, as shown in :listoptions.
@@ -75,7 +75,7 @@ var Option = Class("Option", {
     get helpTag() "'" + this.name + "'",
 
     initValue: function initValue() {
-        util.trapErrors(function () this.value = this.value, this);
+        util.trapErrors(() => { this.value = this.value; });
     },
 
     get isDefault() this.stringValue === this.stringDefaultValue,
@@ -95,7 +95,9 @@ var Option = Class("Option", {
         return this.globalValue = this.defaultValue;
     },
     set globalValue(val) {
-        options.store.set(this.name, { value: val, time: Date.now() });
+        options.store.set(this.name,
+                          { value: this.parse(this.stringify(val)),
+                            time: Date.now() });
     },
 
     /**
@@ -106,6 +108,8 @@ var Option = Class("Option", {
      * @returns {value|[string]}
      */
     parse: function parse(value) Option.dequote(value),
+
+    parseKey: function parseKey(value) value,
 
     /**
      * Returns *values* packed in the appropriate format for the option type.
@@ -140,6 +144,9 @@ var Option = Class("Option", {
         if ((scope & Option.SCOPE_GLOBAL) && (values == undefined))
             values = this.globalValue;
 
+        if (hasOwnProperty(this, "_value"))
+            values = this._value;
+
         if (this.getter)
             return util.trapErrors(this.getter, this, values);
 
@@ -169,6 +176,7 @@ var Option = Class("Option", {
         */
         if ((scope & Option.SCOPE_GLOBAL) && !skipGlobal)
             this.globalValue = newValues;
+        this._value = newValues;
 
         this.hasChanged = true;
         this.setFrom = null;
@@ -203,7 +211,7 @@ var Option = Class("Option", {
      *
      * @returns {boolean}
      */
-    has: function has() Array.some(arguments, function (val) this.value.indexOf(val) >= 0, this),
+    has: function has() Array.some(arguments, val => this.value.indexOf(val) >= 0),
 
     /**
      * Returns whether this option is identified by *name*.
@@ -258,7 +266,7 @@ var Option = Class("Option", {
         return null;
     },
 
-    // Properties {{{2
+    // Properties {{{
 
     /** @property {string} The option's canonical name. */
     name: null,
@@ -318,7 +326,7 @@ var Option = Class("Option", {
      *     references to a given domain from the given values.
      */
     filterDomain: function filterDomain(host, values)
-        Array.filter(values, function (val) !this.domains([val]).some(function (val) util.isSubdomain(val, host)), this),
+        Array.filter(values, val => !this.domains([val]).some(val => util.isSubdomain(val, host))),
 
     /**
      * @property {value} The option's default value. This value will be used
@@ -329,7 +337,7 @@ var Option = Class("Option", {
         let defaultValue = this._defaultValue;
         delete this._defaultValue;
 
-        if (Set.has(this.modules.config.optionDefaults, this.name))
+        if (hasOwnProperty(this.modules.config.optionDefaults, this.name))
             defaultValue = this.modules.config.optionDefaults[this.name];
 
         if (defaultValue == null && this.getter)
@@ -344,8 +352,8 @@ var Option = Class("Option", {
         if (isArray(defaultValue))
             defaultValue = defaultValue.map(Option.quote).join(",");
         else if (isObject(defaultValue))
-            defaultValue = iter(defaultValue).map(function (val) val.map(function (v) Option.quote(v, /:/))
-                                                                    .join(":"))
+            defaultValue = iter(defaultValue).map(val => val.map(v => Option.quote(v, /:/))
+                                                            .join(":"))
                                              .join(",");
 
         if (isArray(defaultValue))
@@ -400,7 +408,8 @@ var Option = Class("Option", {
     hasChanged: false,
 
     /**
-     * Returns the timestamp when the option's value was last changed.
+     * @property {number} Returns the timestamp when the option's value was
+     *     last changed.
      */
     get lastSet() options.store.get(this.name).time,
     set lastSet(val) { options.store.set(this.name, { value: this.globalValue, time: Date.now() }); },
@@ -411,6 +420,7 @@ var Option = Class("Option", {
      */
     setFrom: null
 
+    //}}}
 }, {
     /**
      * @property {number} Global option scope.
@@ -462,7 +472,8 @@ var Option = Class("Option", {
         let [, bang, filter] = /^(!?)(.*)/.exec(pattern);
         filter = Option.dequote(filter).trim();
 
-        let quote = this.keepQuotes ? util.identity : function (v) Option.quote(v, /:/);
+        let quote = this.keepQuotes ? v => v
+                                    : v => Option.quote(v, /:/);
 
         return update(Styles.matchFilter(filter), {
             bang: bang,
@@ -477,11 +488,11 @@ var Option = Class("Option", {
         stringlist: function stringlist(k) this.value.indexOf(k) >= 0,
         get charlist() this.stringlist,
 
-        regexplist: function regexplist(k, default_) {
+        regexplist: function regexplist(k, default_=null) {
             for (let re in values(this.value))
                 if ((re.test || re).call(re, k))
                     return re.result;
-            return arguments.length > 1 ? default_ : null;
+            return default_;
         },
         get regexpmap() this.regexplist,
         get sitelist() this.regexplist,
@@ -489,7 +500,7 @@ var Option = Class("Option", {
     },
 
     domains: {
-        sitelist: function (vals) array.compact(vals.map(function (site) util.getHost(site.filter))),
+        sitelist: function (vals) array.compact(vals.map(site => util.getHost(site.filter))),
         get sitemap() this.sitelist
     },
 
@@ -518,7 +529,7 @@ var Option = Class("Option", {
 
         regexplist: function regexplist(value) (value === "") ? [] :
             Option.splitList(value, true)
-                  .map(function (re) Option.parseRegexp(re, undefined, this.regexpFlags), this),
+                  .map(re => Option.parseRegexp(re, undefined, this.regexpFlags)),
 
         sitelist: function sitelist(value) {
             if (value === "")
@@ -555,8 +566,13 @@ var Option = Class("Option", {
             }, this))
     },
 
+    parseKey: {
+        number: Number,
+        boolean: function boolean(value) value == "true" || value == true ? true : false,
+    },
+
     testValues: {
-        regexpmap:  function regexpmap(vals, validator) vals.every(function (re) validator(re.result)),
+        regexpmap:  function regexpmap(vals, validator) vals.every(re => validator(re.result)),
         get sitemap() this.regexpmap,
         stringlist: function stringlist(vals, validator) vals.every(validator, this),
         stringmap:  function stringmap(vals, validator) values(vals).every(validator, this)
@@ -585,7 +601,7 @@ var Option = Class("Option", {
         return res;
     },
 
-    quote: function quote(str, re) isArray(str) ? str.map(function (s) quote(s, re)).join(",") :
+    quote: function quote(str, re) isArray(str) ? str.map(s => quote(s, re)).join(",") :
         Commands.quoteArg[/[\s|"'\\,]|^$/.test(str) || re && re.test && re.test(str)
             ? (/[\b\f\n\r\t]/.test(str) ? '"' : "'")
             : ""](str, re),
@@ -668,8 +684,8 @@ var Option = Class("Option", {
             values = Array.concat(values);
 
             function uniq(ary) {
-                let seen = {};
-                return ary.filter(function (elem) !Set.add(seen, elem));
+                let seen = RealSet();
+                return ary.filter(elem => !seen.add(elem));
             }
 
             switch (operator) {
@@ -679,11 +695,11 @@ var Option = Class("Option", {
                 // NOTE: Vim doesn't prepend if there's a match in the current value
                 return uniq(Array.concat(values, this.value), true);
             case "-":
-                return this.value.filter(function (item) !Set.has(this, item), Set(values));
+                return this.value.filter(function (item) !this.has(item), RealSet(values));
             case "=":
                 if (invert) {
-                    let keepValues = this.value.filter(function (item) !Set.has(this, item), Set(values));
-                    let addValues  = values.filter(function (item) !Set.has(this, item), Set(this.value));
+                    let keepValues = this.value.filter(function (item) !this.has(item), RealSet(values));
+                    let addValues  = values.filter(function (item) !this.has(item), RealSet(this.value));
                     return addValues.concat(keepValues);
                 }
                 return values;
@@ -714,13 +730,15 @@ var Option = Class("Option", {
         function completions(extra) {
             let context = CompletionContext("");
             return context.fork("", 0, this, this.completer, extra) ||
-                   context.allItems.items.map(function (item) [item.text]);
+                   context.allItems.items.map(item => [item.text]);
         };
 
         if (isObject(vals) && !isArray(vals)) {
             let k = values(completions.call(this, { values: {} })).toObject();
             let v = values(completions.call(this, { value: "" })).toObject();
-            return Object.keys(vals).every(Set.has(k)) && values(vals).every(Set.has(v));
+
+            return Object.keys(vals).every(hasOwnProperty.bind(null, k)) &&
+                   values(vals).every(hasOwnProperty.bind(null, v));
         }
 
         if (this.values)
@@ -729,12 +747,15 @@ var Option = Class("Option", {
             acceptable = completions.call(this);
 
         if (isArray(acceptable))
-            acceptable = Set(acceptable.map(function ([k]) k));
+            acceptable = RealSet(acceptable.map(([k]) => k));
+        else
+            acceptable = RealSet(this.parseKey(k)
+                                 for (k of Object.keys(acceptable)));
 
         if (this.type === "regexpmap" || this.type === "sitemap")
-            return Array.concat(vals).every(function (re) Set.has(acceptable, re.result));
+            return Array.concat(vals).every(re => acceptable.has(re.result));
 
-        return Array.concat(vals).every(Set.has(acceptable));
+        return Array.concat(vals).every(v => acceptable.has(v));
     },
 
     types: {}
@@ -763,6 +784,9 @@ var Option = Class("Option", {
     if (type in Option.parse)
         class_.prototype.parse = Option.parse[type];
 
+    if (type in Option.parseKey)
+        class_.prototype.parseKey = Option.parse[type];
+
     if (type in Option.stringify)
         class_.prototype.stringify = Option.stringify[type];
 
@@ -786,7 +810,7 @@ var OptionHive = Class("OptionHive", Contexts.Hive, {
     init: function init(group) {
         init.supercall(this, group);
         this.values = {};
-        this.has = Set.has(this.values);
+        this.has = v => hasOwnProperty(this.values, v);
     },
 
     add: function add(names, description, type, defaultValue, extraInfo) {
@@ -819,17 +843,18 @@ var Options = Module("options", {
                     opt.set(opt.globalValue, Option.SCOPE_GLOBAL, true);
             }, window);
 
-            modules.cache.register("options.dtd", function ()
-                util.makeDTD(
-                    iter(([["option", o.name, "default"].join("."),
-                           o.type === "string" ? o.defaultValue.replace(/'/g, "''") :
-                           o.defaultValue === true  ? "on"  :
-                           o.defaultValue === false ? "off" : o.stringDefaultValue]
-                          for (o in self)),
+            modules.cache.register("options.dtd",
+                () => util.makeDTD(
+                        iter(([["option", o.name, "default"].join("."),
+                               o.type === "string" ? o.defaultValue.replace(/'/g, "''") :
+                               o.defaultValue === true  ? "on"  :
+                               o.defaultValue === false ? "off" : o.stringDefaultValue]
+                              for (o in self)),
 
-                         ([["option", o.name, "type"].join("."), o.type] for (o in self)),
+                             ([["option", o.name, "type"].join("."), o.type] for (o in self)),
 
-                         config.dtd)));
+                             config.dtd)),
+                true);
         },
 
         signals: {
@@ -854,6 +879,11 @@ var Options = Module("options", {
 
             function opts(opt) {
                 for (let opt in Iterator(this)) {
+                    if (filter && !filter(opt))
+                        continue;
+                    if (!(opt.scope & scope))
+                        continue;
+
                     let option = {
                         __proto__: opt,
                         isDefault: opt.isDefault,
@@ -861,11 +891,6 @@ var Options = Module("options", {
                         pre:       "\u00a0\u00a0", // Unicode nonbreaking space.
                         value:     []
                     };
-
-                    if (filter && !filter(opt))
-                        continue;
-                    if (!(opt.scope & scope))
-                        continue;
 
                     if (opt.type == "boolean") {
                         if (!opt.value)
@@ -875,7 +900,7 @@ var Options = Module("options", {
                     else if (isArray(opt.value) && opt.type != "charlist")
                         option.value = ["", "=",
                                         template.map(opt.value,
-                                                     function (v) template.highlight(String(v)),
+                                                     v => template.highlight(String(v)),
                                                      ["", ",",
                                                       ["span", { style: "width: 0; display: inline-block" }, " "]])];
                     else
@@ -906,8 +931,6 @@ var Options = Module("options", {
          * @optional
          */
         add: function add(names, description, type, defaultValue, extraInfo) {
-            const self = this;
-
             if (!util.isDactyl(Components.stack.caller))
                 deprecated.warn(add, "options.add", "group.options.add");
 
@@ -925,9 +948,11 @@ var Options = Module("options", {
                 this.remove(name);
             }
 
-            let closure = function () self._optionMap[name];
+            let closure = () => this._optionMap[name];
 
-            memoize(this._optionMap, name, function () Option.types[type](modules, names, description, defaultValue, extraInfo));
+            memoize(this._optionMap, name,
+                    function () Option.types[type](modules, names, description, defaultValue, extraInfo));
+
             for (let alias in values(names.slice(1)))
                 memoize(this._optionMap, alias, closure);
 
@@ -948,7 +973,7 @@ var Options = Module("options", {
 
     /** @property {Iterator(Option)} @private */
     __iterator__: function __iterator__()
-        values(this._options.sort(function (a, b) String.localeCompare(a.name, b.name))),
+        values(this._options.sort((a, b) => String.localeCompare(a.name, b.name))),
 
     allPrefs: deprecated("prefs.getNames", function allPrefs() prefs.getNames.apply(prefs, arguments)),
     getPref: deprecated("prefs.get", function getPref() prefs.get.apply(prefs, arguments)),
@@ -963,7 +988,7 @@ var Options = Module("options", {
     setPref: deprecated("prefs.set", function setPref() prefs.set.apply(prefs, arguments)),
     withContext: deprecated("prefs.withContext", function withContext() prefs.withContext.apply(prefs, arguments)),
 
-    cleanupPrefs: Class.Memoize(function () config.prefs.Branch("cleanup.option.")),
+    cleanupPrefs: Class.Memoize(() => config.prefs.Branch("cleanup.option.")),
 
     cleanup: function cleanup(reason) {
         if (~["disable", "uninstall"].indexOf(reason))
@@ -1059,7 +1084,7 @@ var Options = Module("options", {
      */
     remove: function remove(name) {
         let opt = this.get(name);
-        this._options = this._options.filter(function (o) o != opt);
+        this._options = this._options.filter(o => o != opt);
         for (let name in values(opt.names))
             delete this._optionMap[name];
     },
@@ -1095,12 +1120,14 @@ var Options = Module("options", {
 
             let list = [];
             function flushList() {
-                let names = Set(list.map(function (opt) opt.option ? opt.option.name : ""));
+                let names = RealSet(list.map(opt => opt.option ? opt.option.name : ""));
                 if (list.length)
-                    if (list.some(function (opt) opt.all))
-                        options.list(function (opt) !(list[0].onlyNonDefault && opt.isDefault), list[0].scope);
+                    if (list.some(opt => opt.all))
+                        options.list(opt => !(list[0].onlyNonDefault && opt.isDefault),
+                                     list[0].scope);
                     else
-                        options.list(function (opt) Set.has(names, opt.name), list[0].scope);
+                        options.list(opt => names.has(opt.name),
+                                     list[0].scope);
                 list = [];
             }
 
@@ -1212,11 +1239,11 @@ var Options = Module("options", {
                     context.advance(filter.length);
                     filter = filter.substr(0, filter.length - 1);
 
-                    context.pushProcessor(0, function (item, text, next) next(item, text.substr(0, 100)));
+                    context.pushProcessor(0, (item, text, next) => next(item, text.substr(0, 100)));
                     context.completions = [
                             [prefs.get(filter), _("option.currentValue")],
                             [prefs.defaults.get(filter), _("option.defaultValue")]
-                    ].filter(function (k) k[0] != null);
+                    ].filter(k => k[0] != null);
                     return null;
                 }
 
@@ -1229,8 +1256,12 @@ var Options = Module("options", {
             context.highlight();
             if (context.filter.indexOf("=") == -1) {
                 if (false && prefix)
-                    context.filters.push(function ({ item }) item.type == "boolean" || prefix == "inv" && isArray(item.values));
-                return completion.option(context, opt.scope, opt.name == "inv" ? opt.name : prefix);
+                    context.filters.push(({ item }) => (item.type == "boolean" ||
+                                                        prefix == "inv" && isArray(item.values)));
+
+                return completion.option(context, opt.scope,
+                                         opt.name == "inv" ? opt.name
+                                                           : prefix);
             }
 
             function error(length, message) {
@@ -1256,11 +1287,11 @@ var Options = Module("options", {
             if (!opt.value && !opt.operator && !opt.invert) {
                 context.fork("default", 0, this, function (context) {
                     context.title = ["Extra Completions"];
-                    context.pushProcessor(0, function (item, text, next) next(item, text.substr(0, 100)));
+                    context.pushProcessor(0, (item, text, next) => next(item, text.substr(0, 100)));
                     context.completions = [
                             [option.stringValue, _("option.currentValue")],
                             [option.stringDefaultValue, _("option.defaultValue")]
-                    ].filter(function (f) f[0] !== "");
+                    ].filter(f => f[0] !== "");
                     context.quote = ["", util.identity, ""];
                 });
             }
@@ -1270,15 +1301,15 @@ var Options = Module("options", {
 
             // Fill in the current values if we're removing
             if (opt.operator == "-" && isArray(opt.values)) {
-                let have = Set([i.text for (i in values(context.allItems.items))]);
+                let have = RealSet((i.text for (i in values(context.allItems.items))));
                 context = context.fork("current-values", 0);
                 context.anchored = optcontext.anchored;
                 context.maxItems = optcontext.maxItems;
 
-                context.filters.push(function (i) !Set.has(have, i.text));
+                context.filters.push(i => !have.has(i.text));
                 modules.completion.optionValue(context, opt.name, opt.operator, null,
                                        function (context) {
-                                           context.generate = function () option.value.map(function (o) [o, ""]);
+                                           context.generate = () => option.value.map(o => [o, ""]);
                                        });
                 context.title = ["Current values"];
             }
@@ -1304,7 +1335,7 @@ var Options = Module("options", {
 
                     util.assert(scope == "g:" || scope == null,
                                 _("command.let.illegalVar", scope + name));
-                    util.assert(Set.has(globalVariables, name) || (expr && !op),
+                    util.assert(hasOwnProperty(globalVariables, name) || (expr && !op),
                                 _("command.let.undefinedVar", fullName));
 
                     if (!expr)
@@ -1402,7 +1433,7 @@ var Options = Module("options", {
             function (args) {
                 for (let [, name] in args) {
                     name = name.replace(/^g:/, ""); // throw away the scope prefix
-                    if (!Set.has(dactyl._globalVariables, name)) {
+                    if (!hasOwnProperty(dactyl._globalVariables, name)) {
                         if (!args.bang)
                             dactyl.echoerr(_("command.let.noSuch", name));
                         return;
@@ -1426,11 +1457,11 @@ var Options = Module("options", {
             context.anchored = false;
             context.completions = modules.options;
             if (prefix == "inv")
-                context.keys.text = function (opt)
-                    opt.type == "boolean" || isArray(opt.value) ? opt.names.map(function (n) "inv" + n)
+                context.keys.text = opt =>
+                    opt.type == "boolean" || isArray(opt.value) ? opt.names.map(n => "inv" + n)
                                                                 : opt.names;
             if (scope)
-                context.filters.push(function ({ item }) item.scope & scope);
+                context.filters.push(({ item }) => item.scope & scope);
         };
 
         completion.optionValue = function (context, name, op, curValue, completer) {
@@ -1484,10 +1515,10 @@ var Options = Module("options", {
 
             function val(obj) {
                 if (isArray(opt.defaultValue)) {
-                    let val = array.nth(obj, function (re) re.key == extra.key, 0);
+                    let val = [].find.call(obj, re => (re.key == extra.key));
                     return val && val.result;
                 }
-                if (Set.has(opt.defaultValue, extra.key))
+                if (hasOwnProperty(opt.defaultValue, extra.key))
                     return obj[extra.key];
             }
 
@@ -1496,7 +1527,7 @@ var Options = Module("options", {
                     context.completions = [
                             [val(opt.value), _("option.currentValue")],
                             [val(opt.defaultValue), _("option.defaultValue")]
-                    ].filter(function (f) f[0] !== "" && f[0] != null);
+                    ].filter(f => (f[0] !== "" && f[0] != null));
                 });
                 context = context.fork("stuff", 0);
             }
@@ -1506,17 +1537,17 @@ var Options = Module("options", {
             // Not Vim compatible, but is a significant enough improvement
             // that it's worth breaking compatibility.
             if (isArray(newValues)) {
-                context.filters.push(function (i) newValues.indexOf(i.text) == -1);
+                context.filters.push(i => newValues.indexOf(i.text) == -1);
                 if (op == "+")
-                    context.filters.push(function (i) curValues.indexOf(i.text) == -1);
+                    context.filters.push(i => curValues.indexOf(i.text) == -1);
                 if (op == "-")
-                    context.filters.push(function (i) curValues.indexOf(i.text) > -1);
+                    context.filters.push(i => curValues.indexOf(i.text) > -1);
 
                 memoize(extra, "values", function () {
                     if (op == "+")
                         return curValues.concat(newValues);
                     if (op == "-")
-                        return curValues.filter(function (v) newValues.indexOf(val) == -1);
+                        return curValues.filter(v => newValues.indexOf(val) == -1);
                     return newValues;
                 });
             }
@@ -1528,7 +1559,7 @@ var Options = Module("options", {
     },
     javascript: function initJavascript(dactyl, modules, window) {
         const { options, JavaScript } = modules;
-        JavaScript.setCompleter(Options.prototype.get, [function () ([o.name, o.description] for (o in options))]);
+        JavaScript.setCompleter(Options.prototype.get, [() => ([o.name, o.description] for (o in options))]);
     },
     sanitizer: function initSanitizer(dactyl, modules, window) {
         const { sanitizer } = modules;
@@ -1566,4 +1597,4 @@ endModule();
 
 } catch(e){ if (!e.stack) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

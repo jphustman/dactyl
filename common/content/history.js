@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -13,9 +13,7 @@ var History = Module("history", {
 
     get service() services.history,
 
-    get: function get(filter, maxItems, sort) {
-        sort = sort || this.SORT_DEFAULT;
-
+    get: function get(filter, maxItems, sort=this.SORT_DEFAULT) {
         if (isString(filter))
             filter = { searchTerms: filter };
 
@@ -61,15 +59,15 @@ var History = Module("history", {
     },
 
     get session() {
-        let webNav = window.getWebNavigation()
+        let webNav = window.getWebNavigation();
         let sh = webNav.sessionHistory;
 
         let obj = [];
-        obj.__defineGetter__("index", function () sh.index);
-        obj.__defineSetter__("index", function (val) { webNav.gotoIndex(val) });
+        obj.__defineGetter__("index", () => sh.index);
+        obj.__defineSetter__("index", function (val) { webNav.gotoIndex(val); });
         obj.__iterator__ = function () array.iterItems(this);
 
-        for (let item in iter(sh.SHistoryEnumerator, Ci.nsIHistoryEntry))
+        for (let item in iter(sh.SHistoryEnumerator, Ci.nsISHEntry))
             obj.push(update(Object.create(item), {
                 index: obj.length,
                 icon: Class.Memoize(function () services.favicon.getFaviconImageForPage(this.URI).spec)
@@ -111,7 +109,7 @@ var History = Module("history", {
      */
     search: function search(item, steps) {
         var ctxt;
-        var filter = function (item) true;
+        var filter = item => true;
         if (item == "domain")
             var filter = function (item) {
                 let res = item.URI.hostPort != ctxt;
@@ -165,7 +163,7 @@ var History = Module("history", {
         let items = completion.runCompleter("history", filter, maxItems, maxItems, sort);
 
         if (items.length)
-            return dactyl.open(items.map(function (i) i.url), dactyl.NEW_TAB);
+            return dactyl.open(items.map(i => i.url), dactyl.NEW_TAB);
 
         if (filter.length > 0)
             dactyl.echoerr(_("history.noMatching", filter.quote()));
@@ -209,7 +207,9 @@ var History = Module("history", {
                     context.compare = CompletionContext.Sort.unsorted;
                     context.filters = [CompletionContext.Filter.textDescription];
                     context.completions = sh.slice(0, sh.index).reverse();
-                    context.keys = { text: function (item) (sh.index - item.index) + ": " + item.URI.spec, description: "title", icon: "icon" };
+                    context.keys = { text: function (item) (sh.index - item.index) + ": " + item.URI.spec,
+                                     description: "title",
+                                     icon: "icon" };
                 },
                 count: true,
                 literal: 0,
@@ -249,7 +249,9 @@ var History = Module("history", {
                     context.compare = CompletionContext.Sort.unsorted;
                     context.filters = [CompletionContext.Filter.textDescription];
                     context.completions = sh.slice(sh.index + 1);
-                    context.keys = { text: function (item) (item.index - sh.index) + ": " + item.URI.spec, description: "title", icon: "icon" };
+                    context.keys = { text: function (item) (item.index - sh.index) + ": " + item.URI.spec,
+                                     description: "title",
+                                     icon: "icon" };
                 },
                 count: true,
                 literal: 0,
@@ -284,7 +286,7 @@ var History = Module("history", {
                                 "title",
                                 "uri",
                                 "visitcount"
-                            ].map(function (order) [
+                            ].map(order => [
                                   ["+" + order.replace(" ", ""), /*L*/"Sort by " + order + " ascending"],
                                   ["-" + order.replace(" ", ""), /*L*/"Sort by " + order + " descending"]
                             ]));
@@ -305,7 +307,7 @@ var History = Module("history", {
                     jumps = [sh[sh.index]];
                 else {
                     index += jumps.index;
-                    jumps = jumps.locations.map(function (l) ({
+                    jumps = jumps.locations.map(l => ({
                         __proto__: l,
                         title: buffer.title,
                         get URI() util.newURI(this.location)
@@ -324,12 +326,12 @@ var History = Module("history", {
     completion: function initCompletion() {
         completion.domain = function (context) {
             context.anchored = false;
-            context.compare = function (a, b) String.localeCompare(a.key, b.key);
+            context.compare = (a, b) => String.localeCompare(a.key, b.key);
             context.keys = { text: util.identity, description: util.identity,
                 key: function (host) host.split(".").reverse().join(".") };
 
             // FIXME: Schema-specific
-            context.generate = function () [
+            context.generate = () => [
                 Array.slice(row.rev_host).reverse().join("").slice(1)
                 for (row in iter(services.history.DBConnection
                                          .createStatement("SELECT DISTINCT rev_host FROM moz_places WHERE rev_host IS NOT NULL;")))
@@ -352,7 +354,7 @@ var History = Module("history", {
         completion.addUrlCompleter("history", "History", completion.history);
     },
     mappings: function initMappings() {
-        function bind() mappings.add.apply(mappings, [config.browserModes].concat(Array.slice(arguments)));
+        function bind(...args) mappings.add.apply(mappings, [config.browserModes].concat(args));
 
         bind(["<C-o>"], "Go to an older position in the jump list",
              function ({ count }) { history.stepTo(-Math.max(count, 1), true); },
@@ -371,13 +373,13 @@ var History = Module("history", {
              { count: true });
 
         bind(["[d"], "Go back to the previous domain in the browser history",
-             function ({ count }) { history.search("domain", -Math.max(count, 1)) },
+             function ({ count }) { history.search("domain", -Math.max(count, 1)); },
              { count: true });
 
         bind(["]d"], "Go forward to the next domain in the browser history",
-             function ({ count }) { history.search("domain", Math.max(count, 1)) },
+             function ({ count }) { history.search("domain", Math.max(count, 1)); },
              { count: true });
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

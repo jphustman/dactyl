@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -9,16 +9,19 @@
 let global = this;
 defineModule("config", {
     exports: ["ConfigBase", "Config", "config"],
-    require: ["dom", "io", "protocol", "services", "util", "template"]
+    require: ["io", "protocol", "services"]
 });
 
 lazyRequire("addons", ["AddonManager"]);
 lazyRequire("cache", ["cache"]);
+lazyRequire("dom", ["DOM"]);
 lazyRequire("highlight", ["highlight"]);
 lazyRequire("messages", ["_"]);
 lazyRequire("prefs", ["localPrefs", "prefs"]);
 lazyRequire("storage", ["storage", "File"]);
 lazyRequire("styles", ["Styles"]);
+lazyRequire("template", ["template"]);
+lazyRequire("util", ["util"]);
 
 function AboutHandler() {}
 AboutHandler.prototype = {
@@ -37,7 +40,7 @@ AboutHandler.prototype = {
         return channel;
     },
 
-    getURIFlags: function (uri) Ci.nsIAboutModule.ALLOW_SCRIPT,
+    getURIFlags: function (uri) Ci.nsIAboutModule.ALLOW_SCRIPT
 };
 var ConfigBase = Class("ConfigBase", {
     /**
@@ -47,20 +50,28 @@ var ConfigBase = Class("ConfigBase", {
     init: function init() {
         this.loadConfig();
 
-        this.features.push = deprecated("Set.add", function push(feature) Set.add(this, feature));
-        if (this.haveGecko("2b"))
-            Set.add(this.features, "Gecko2");
-
-        JSMLoader.registerFactory(JSMLoader.Factory(AboutHandler));
-        JSMLoader.registerFactory(JSMLoader.Factory(
-            Protocol("dactyl", "{9c8f2530-51c8-4d41-b356-319e0b155c44}",
-                     "resource://dactyl-content/")));
-
-        this.timeout(function () {
-            cache.register("config.dtd", function () util.makeDTD(config.dtd));
+        util.trapErrors(() => {
+            JSMLoader.registerFactory(JSMLoader.Factory(AboutHandler));
+        });
+        util.withProperErrors(() => {
+            JSMLoader.registerFactory(JSMLoader.Factory(
+                Protocol("dactyl", "{9c8f2530-51c8-4d41-b356-319e0b155c44}",
+                         "resource://dactyl-content/")));
         });
 
-        services["dactyl:"].pages["dtd"] = function () [null, cache.get("config.dtd")];
+        this.protocolLoaded = true;
+        this.timeout(function () {
+            cache.register("config.dtd", () => util.makeDTD(config.dtd),
+                           true);
+        });
+
+        // FIXME: May not be ready before first window opens.
+        AddonManager.getAddonByID("{972ce4c6-7e08-4474-a285-3208198ce6fd}", a => {
+            if (!a.isActive)
+                config.features.delete("default-theme");
+        });
+
+        services["dactyl:"].pages["dtd"] = () => [null, cache.get("config.dtd")];
 
         update(services["dactyl:"].providers, {
             "locale": function (uri, path) LocaleChannel("dactyl-locale", config.locale, path, uri),
@@ -70,18 +81,18 @@ var ConfigBase = Class("ConfigBase", {
 
     get prefs() localPrefs,
 
-    get has() Set.has(this.features),
+    has: function (feature) this.features.has(feature),
 
     configFiles: [
         "resource://dactyl-common/config.json",
         "resource://dactyl-local/config.json"
     ],
 
-    configs: Class.Memoize(function () this.configFiles.map(function (url) JSON.parse(File.readURL(url)))),
+    configs: Class.Memoize(function () this.configFiles.map(url => JSON.parse(File.readURL(url)))),
 
     loadConfig: function loadConfig(documentURL) {
 
-        for each (let config in this.configs) {
+        for (let config of this.configs) {
             if (documentURL)
                 config = config.overlays && config.overlays[documentURL] || {};
 
@@ -90,6 +101,9 @@ var ConfigBase = Class("ConfigBase", {
 
                 if (isArray(this[prop]))
                     this[prop] = [].concat(this[prop], value);
+                else if (isinstance(this[prop], ["Set"]))
+                    for (let key of value)
+                        this[prop].add(key);
                 else if (isObject(this[prop])) {
                     if (isArray(value))
                         value = Set(value);
@@ -108,6 +122,7 @@ var ConfigBase = Class("ConfigBase", {
         global: ["addons",
                  "base",
                  "io",
+                 ["bookmarkcache", "bookmarkcache"],
                  "buffer",
                  "cache",
                  "commands",
@@ -125,6 +140,7 @@ var ConfigBase = Class("ConfigBase", {
                  "options",
                  "overlay",
                  "prefs",
+                 ["promises", "Promise", "Task", "promises"],
                  "protocol",
                  "sanitizer",
                  "services",
@@ -151,31 +167,22 @@ var ConfigBase = Class("ConfigBase", {
     loadStyles: function loadStyles(force) {
         highlight.styleableChrome = this.styleableChrome;
 
-        highlight.loadCSS(this.CSS.replace(/__MSG_(.*?)__/g, function (m0, m1) _(m1)));
-        highlight.loadCSS(this.helpCSS.replace(/__MSG_(.*?)__/g, function (m0, m1) _(m1)));
-
-        if (!this.haveGecko("2b"))
-            highlight.loadCSS(literal(/*
-                !TabNumber               font-weight: bold; margin: 0px; padding-right: .8ex;
-                !TabIconNumber  {
-                    font-weight: bold;
-                    color: white;
-                    text-align: center;
-                    text-shadow: black -1px 0 1px, black 0 1px 1px, black 1px 0 1px, black 0 -1px 1px;
-                }
-            */));
+        highlight.loadCSS(this.CSS.replace(/__MSG_(.*?)__/g,
+                                           (m0, m1) => _(m1)));
+        highlight.loadCSS(this.helpCSS.replace(/__MSG_(.*?)__/g,
+                                               (m0, m1) => _(m1)));
 
         let hl = highlight.set("Find", "");
         hl.onChange = function () {
             function hex(val) ("#" + util.regexp.iterate(/\d+/g, val)
-                                         .map(function (num) ("0" + Number(num).toString(16)).slice(-2))
+                                         .map(num => ("0" + Number(num).toString(16)).slice(-2))
                                          .join("")
                               ).slice(0, 7);
 
             let elem = services.appShell.hiddenDOMWindow.document.createElement("div");
             elem.style.cssText = this.cssText;
 
-            let keys = iter(Styles.propertyIter(this.cssText)).map(function (p) p.name).toArray();
+            let keys = iter(Styles.propertyIter(this.cssText)).map(p => p.name).toArray();
             let bg = keys.some(bind("test", /^background/));
             let fg = keys.indexOf("color") >= 0;
 
@@ -197,7 +204,7 @@ var ConfigBase = Class("ConfigBase", {
     /**
      * The current application locale.
      */
-    appLocale: Class.Memoize(function () services.chromeRegistry.getSelectedLocale("global")),
+    appLocale: Class.Memoize(() => services.chromeRegistry.getSelectedLocale("global")),
 
     /**
      * The current dactyl locale.
@@ -243,7 +250,7 @@ var ConfigBase = Class("ConfigBase", {
     bestLocale: function (list) {
         return values([this.appLocale, this.appLocale.replace(/-.*/, ""),
                        "en", "en-US", list[0]])
-            .nth(Set.has(Set(list)), 0);
+            .find(bind("has", RealSet(list)));
     },
 
     /**
@@ -253,7 +260,7 @@ var ConfigBase = Class("ConfigBase", {
         // Horrible hack.
         let res = {};
         function process(manifest) {
-            for each (let line in manifest.split(/\n+/)) {
+            for (let line of manifest.split(/\n+/)) {
                 let match = /^\s*(content|skin|locale|resource)\s+([^\s#]+)\s/.exec(line);
                 if (match)
                     res[match[2]] = true;
@@ -271,7 +278,7 @@ var ConfigBase = Class("ConfigBase", {
                 }
         }
 
-        for each (let dir in ["UChrm", "AChrom"]) {
+        for (let dir of ["UChrm", "AChrom"]) {
             dir = File(services.directory.get(dir, Ci.nsIFile));
             if (dir.exists() && dir.isDirectory())
                 for (let file in dir.iterDirectory())
@@ -398,7 +405,7 @@ var ConfigBase = Class("ConfigBase", {
     dtd: Class.Memoize(function ()
         iter(this.dtdExtra,
              (["dactyl." + k, v] for ([k, v] in iter(config.dtdDactyl))),
-             (["dactyl." + s, config[s]] for each (s in config.dtdStrings)))
+             (["dactyl." + s, config[s]] for (s of config.dtdStrings)))
             .toObject()),
 
     dtdDactyl: memoize({
@@ -410,11 +417,11 @@ var ConfigBase = Class("ConfigBase", {
         get plugins() "http://5digits.org/" + this.name + "/plugins",
         get faq() this.home + this.name + "/faq",
 
-        "list.mailto": Class.Memoize(function () config.name + "@googlegroups.com"),
-        "list.href": Class.Memoize(function () "http://groups.google.com/group/" + config.name),
+        "list.mailto": Class.Memoize(() => config.name + "@googlegroups.com"),
+        "list.href": Class.Memoize(() => "http://groups.google.com/group/" + config.name),
 
         "hg.latest": Class.Memoize(function () this.code + "source/browse/"), // XXX
-        "irc": "irc://irc.oftc.net/#pentadactyl",
+        "irc": "irc://irc.oftc.net/#pentadactyl"
     }),
 
     dtdExtra: {
@@ -444,7 +451,7 @@ var ConfigBase = Class("ConfigBase", {
                 if (this.helpStyles.test(k))
                     highlight.loaded[k] = true;
         }
-        this.helpCSS = true;
+        this.helpStyled = true;
     },
 
     Local: function Local(dactyl, modules, { document, window }) ({
@@ -455,7 +462,7 @@ var ConfigBase = Class("ConfigBase", {
                     ["menupopup", { id: "viewSidebarMenu", xmlns: "xul" }],
                     ["broadcasterset", { id: "mainBroadcasterSet", xmlns: "xul" }]];
 
-            for each (let [id, [name, key, uri]] in Iterator(this.sidebars)) {
+            for (let [id, [name, key, uri]] in Iterator(this.sidebars)) {
                 append[0].push(
                         ["menuitem", { observes: "pentadactyl-" + id + "Sidebar", label: name,
                                        accesskey: key }]);
@@ -477,8 +484,8 @@ var ConfigBase = Class("ConfigBase", {
             get commandContainer() document.documentElement.id
         }),
 
-        browser: Class.Memoize(function () window.gBrowser),
-        tabbrowser: Class.Memoize(function () window.gBrowser),
+        browser: Class.Memoize(() => window.gBrowser),
+        tabbrowser: Class.Memoize(() => window.gBrowser),
 
         get browserModes() [modules.modes.NORMAL],
 
@@ -493,7 +500,7 @@ var ConfigBase = Class("ConfigBase", {
          */
         get outputHeight() this.browser.mPanelContainer.boxObject.height,
 
-        tabStrip: Class.Memoize(function () document.getElementById("TabsToolbar") || this.tabbrowser.mTabContainer),
+        tabStrip: Class.Memoize(function () document.getElementById("TabsToolbar") || this.tabbrowser.mTabContainer)
     }),
 
     /**
@@ -536,7 +543,7 @@ var ConfigBase = Class("ConfigBase", {
      *    dactyl.has(feature) to check for a feature's presence
      *    in this array.
      */
-    features: {},
+    features: RealSet(["default-theme"]),
 
     /**
      * @property {string} The file extension used for command script files.
@@ -568,19 +575,13 @@ var ConfigBase = Class("ConfigBase", {
     sidebars: {},
 
     /**
-     * @property {string} The leaf name of any temp files created by
-     *     {@link io.createTempFile}.
-     */
-    get tempFile() this.name + ".txt",
-
-    /**
      * @constant
      * @property {string} The default highlighting rules.
      * See {@link Highlights#loadCSS} for details.
      */
-    CSS: Class.Memoize(function () File.readURL("resource://dactyl-skin/global-styles.css")),
+    CSS: Class.Memoize(() => File.readURL("resource://dactyl-skin/global-styles.css")),
 
-    helpCSS: Class.Memoize(function () File.readURL("resource://dactyl-skin/help-styles.css"))
+    helpCSS: Class.Memoize(() => File.readURL("resource://dactyl-skin/help-styles.css"))
 }, {
 });
 JSMLoader.loadSubScript("resource://dactyl-local-content/config.js", this);
@@ -589,17 +590,17 @@ config.INIT = update(Object.create(config.INIT), config.INIT, {
     init: function init(dactyl, modules, window) {
         init.superapply(this, arguments);
 
-        let img = window.Image();
+        let img = new window.Image;
         img.src = this.logo || "resource://dactyl-local-content/logo.png";
         img.onload = util.wrapCallback(function () {
-            highlight.loadCSS(literal(/*
+            highlight.loadCSS(literal(function () /*
                 !Logo  {
                      display:    inline-block;
                      background: url({src});
                      width:      {width}px;
                      height:     {height}px;
                 }
-            */).replace(/\{(.*?)\}/g, function (m, m1) img[m1]));
+            */$).replace(/\{(.*?)\}/g, (m, m1) => img[m1]));
             img = null;
         });
     },
@@ -619,4 +620,4 @@ endModule();
 
 // catch(e){ if (typeof e === "string") e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 sts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

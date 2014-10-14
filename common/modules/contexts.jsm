@@ -1,4 +1,4 @@
-// Copyright (c) 2010-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2010-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -19,8 +19,6 @@ var Const = function Const(val) Class.Property({ enumerable: true, value: val })
 
 var Group = Class("Group", {
     init: function init(name, description, filter, persist) {
-        const self = this;
-
         this.name = name;
         this.description = description;
         this.filter = filter || this.constructor.defaultFilter;
@@ -45,14 +43,14 @@ var Group = Class("Group", {
             delete this[hive];
 
         if (reason != "shutdown")
-            this.children.splice(0).forEach(this.contexts.closure.removeGroup);
+            this.children.splice(0).forEach(this.contexts.bound.removeGroup);
     },
     destroy: function destroy(reason) {
         for (let hive in values(this.hives))
             util.trapErrors("destroy", hive);
 
         if (reason != "shutdown")
-            this.children.splice(0).forEach(this.contexts.closure.removeGroup);
+            this.children.splice(0).forEach(this.contexts.bound.removeGroup);
     },
 
     argsExtra: function argsExtra() ({}),
@@ -67,21 +65,20 @@ var Group = Class("Group", {
     get builtin() this.modules.contexts.builtinGroups.indexOf(this) >= 0,
 
 }, {
-    compileFilter: function (patterns, default_) {
-        if (arguments.length < 2)
-            default_ = false;
-
+    compileFilter: function (patterns, default_=false) {
         function siteFilter(uri)
-            let (match = array.nth(siteFilter.filters, function (f) f(uri), 0))
-                match ? match.result : default_;
+            let (match = siteFilter.filters.find(f => f(uri)))
+                match ? match.result
+                      : default_;
 
         return update(siteFilter, {
             toString: function () this.filters.join(","),
 
             toJSONXML: function (modules) let (uri = modules && modules.buffer.uri)
                 template.map(this.filters,
-                             function (f) ["span", { highlight: uri && f(uri) ? "Filter" : "" },
-                                               "toJSONXML" in f ? f.toJSONXML() : String(f)],
+                             f => ["span", { highlight: uri && f(uri) ? "Filter" : "" },
+                                       ("toJSONXML" in f ? f.toJSONXML()
+                                                         : String(f))],
                              ","),
 
             filters: Option.parse.sitelist(patterns)
@@ -142,22 +139,26 @@ var Contexts = Module("contexts", {
                 completer: function (context) modules.completion.group(context)
             });
 
-            memoize(modules, "userContext",  function () contexts.Context(modules.io.getRCFile("~", true), contexts.user, [modules, true]));
-            memoize(modules, "_userContext", function () contexts.Context(modules.io.getRCFile("~", true), contexts.user, [modules.userContext]));
+            memoize(modules, "userContext",  () => contexts.Context(modules.io.getRCFile("~", true), contexts.user, [modules, false]));
+            memoize(modules, "_userContext", () => modules.userContext);
         },
 
         cleanup: function () {
-            for each (let hive in this.groupList.slice())
+            for (let hive of this.groupList.slice())
                 util.trapErrors("cleanup", hive, "shutdown");
         },
 
         destroy: function () {
-            for each (let hive in values(this.groupList.slice()))
+            for (let hive of values(this.groupList.slice()))
                 util.trapErrors("destroy", hive, "shutdown");
 
-            for (let [name, plugin] in iter(this.modules.plugins.contexts))
+            for each (let plugin in this.modules.plugins.contexts) {
                 if (plugin && "onUnload" in plugin && callable(plugin.onUnload))
                     util.trapErrors("onUnload", plugin);
+
+                if (isinstance(plugin, ["Sandbox"]))
+                    util.trapErrors("nukeSandbox", Cu, plugin);
+            }
         },
 
         signals: {
@@ -171,13 +172,12 @@ var Contexts = Module("contexts", {
         Hives: Class("Hives", Class.Property, {
             init: function init(name, constructor) {
                 const { contexts } = modules;
-                const self = this;
 
                 if (this.Hive)
                     return {
                         enumerable: true,
 
-                        get: function () array(contexts.groups[self.name])
+                        get: () => array(contexts.groups[this.name])
                     };
 
                 this.Hive = constructor;
@@ -190,11 +190,13 @@ var Contexts = Module("contexts", {
                 });
 
                 memoize(contexts.hives, name,
-                        function () Object.create(Object.create(contexts.hiveProto,
-                                                                { _hive: { value: name } })));
+                        () => Object.create(Object.create(contexts.hiveProto,
+                                                          { _hive: { value: name } })));
 
                 memoize(contexts.groupsProto, name,
-                        function () [group[name] for (group in values(this.groups)) if (Set.has(group, name))]);
+                        function () [group[name]
+                                     for (group in values(this.groups))
+                                     if (hasOwnProperty(group, name))]);
             },
 
             get toStringParams() [this.name, this.Hive]
@@ -204,25 +206,23 @@ var Contexts = Module("contexts", {
     Context: function Context(file, group, args) {
         const { contexts, io, newContext, plugins, userContext } = this.modules;
 
-        let isPlugin = array.nth(io.getRuntimeDirectories("plugins"),
-                                 function (dir) dir.contains(file, true),
-                                 0);
-        let isRuntime = array.nth(io.getRuntimeDirectories(""),
-                                  function (dir) dir.contains(file, true),
-                                  0);
+        let isPlugin  = io.getRuntimeDirectories("plugins")
+                          .find(dir => dir.contains(file, true));
+        let isRuntime = io.getRuntimeDirectories("")
+                          .find(dir => dir.contains(file, true));
 
         let name = isPlugin ? file.getRelativeDescriptor(isPlugin).replace(File.PATH_SEP, "-")
                             : file.leafName;
         let id   = util.camelCase(name.replace(/\.[^.]*$/, ""));
 
         let contextPath = file.path;
-        let self = Set.has(plugins, contextPath) && plugins.contexts[contextPath];
+        let self = hasOwnProperty(plugins, contextPath) && plugins.contexts[contextPath];
 
         if (!self && isPlugin && false)
-            self = Set.has(plugins, id) && plugins[id];
+            self = hasOwnProperty(plugins, id) && plugins[id];
 
         if (self) {
-            if (Set.has(self, "onUnload"))
+            if (hasOwnProperty(self, "onUnload"))
                 util.trapErrors("onUnload", self);
         }
         else {
@@ -278,7 +278,7 @@ var Contexts = Module("contexts", {
         }
 
         let path = isRuntime ? file.getRelativeDescriptor(isRuntime) : file.path;
-        let name = isRuntime ? path.replace(/^(plugin|color)s([\\\/])/, "$1$2") : "script-" + path;
+        name = isRuntime ? path.replace(/^(plugin|color)s([\\\/])/, "$1$2") : "script-" + path;
 
         if (!group)
             group = this.addGroup(commands.nameRegexp
@@ -307,15 +307,14 @@ var Contexts = Module("contexts", {
         if (uri instanceof Ci.nsIFileURL)
             var file = File(uri.file);
 
-        let isPlugin = array.nth(io.getRuntimeDirectories("plugins"),
-                                 function (dir) dir.contains(file, true),
-                                 0);
+        isPlugin = io.getRuntimeDirectories("plugins")
+                     .find(dir => dir.contains(file, true));
 
         let name = isPlugin && file && file.getRelativeDescriptor(isPlugin)
                                            .replace(File.PATH_SEP, "-");
         let id   = util.camelCase(name.replace(/\.[^.]*$/, ""));
 
-        let self = Set.has(this.pluginModules, canonical) && this.pluginModules[canonical];
+        let self = hasOwnProperty(this.pluginModules, canonical) && this.pluginModules[canonical];
 
         if (!self) {
             self = Object.create(jsmodules);
@@ -341,7 +340,7 @@ var Contexts = Module("contexts", {
                         delete contexts.pluginModules[canonical];
                     }
 
-                    for each (let { plugins } in overlay.modules)
+                    for (let { plugins } of overlay.modules)
                         if (plugins[this.NAME] == this)
                             delete plugins[this.name];
                 })
@@ -416,7 +415,7 @@ var Contexts = Module("contexts", {
 
     initializedGroups: function (hive)
         let (need = hive ? [hive] : Object.keys(this.hives))
-            this.groupList.filter(function (group) need.some(Set.has(group))),
+            this.groupList.filter(group => need.some(hasOwnProperty.bind(null, group))),
 
     addGroup: function addGroup(name, description, filter, persist, replace) {
         let group = this.getGroup(name);
@@ -473,7 +472,7 @@ var Contexts = Module("contexts", {
     getGroup: function getGroup(name, hive) {
         if (name === "default")
             var group = this.context && this.context.context && this.context.context.GROUP;
-        else if (Set.has(this.groupMap, name))
+        else if (hasOwnProperty(this.groupMap, name))
             group = this.groupMap[name];
 
         if (group && hive)
@@ -483,13 +482,7 @@ var Contexts = Module("contexts", {
 
     getDocs: function getDocs(context) {
         try {
-            if (isinstance(context, ["Sandbox"])) {
-                let info = "INFO" in context && Cu.evalInSandbox("this.INFO instanceof XML ? INFO.toXMLString() : this.INFO", context);
-                return /^</.test(info) ? XML(info) : info;
-            }
             if (DOM.isJSONXML(context.INFO))
-                return context.INFO;
-            if (typeof context.INFO == "xml" && config.haveGecko(null, "14.*"))
                 return context.INFO;
         }
         catch (e) {}
@@ -518,7 +511,7 @@ var Contexts = Module("contexts", {
                               for ([i, name] in Iterator(params)));
 
         let rhs = args.literalArg;
-        let type = ["-builtin", "-ex", "-javascript", "-keys"].reduce(function (a, b) args[b] ? b : a, default_);
+        let type = ["-builtin", "-ex", "-javascript", "-keys"].reduce((a, b) => args[b] ? b : a, default_);
 
         switch (type) {
         case "-builtin":
@@ -546,8 +539,8 @@ var Contexts = Module("contexts", {
             if (callable(params))
                 action = dactyl.userEval("(function action() { with (action.makeParams(this, arguments)) {" + args.literalArg + "} })");
             else
-                action = dactyl.userFunc.apply(dactyl, params.concat(args.literalArg).array);
-            process = function (param) isObject(param) && param.valueOf ? param.valueOf() : param;
+                action = dactyl.userFunc.apply(dactyl, params.concat(args.literalArg));
+            process = param => isObject(param) && param.valueOf ? param.valueOf() : param;
             action.params = params;
             action.makeParams = makeParams;
             break;
@@ -649,7 +642,7 @@ var Contexts = Module("contexts", {
 
                 util.assert(!group.builtin ||
                                 !["-description", "-locations", "-nopersist"]
-                                    .some(Set.has(args.explicitOpts)),
+                                    .some(hasOwnProperty.bind(null, args.explicitOpts)),
                             _("group.cantModifyBuiltin"));
             },
             {
@@ -710,7 +703,7 @@ var Contexts = Module("contexts", {
                 util.assert(args.bang ^ !!args[0], _("error.argumentOrBang"));
 
                 if (args.bang)
-                    contexts.groupList = contexts.groupList.filter(function (g) g.builtin);
+                    contexts.groupList = contexts.groupList.filter(g => g.builtin);
                 else {
                     util.assert(contexts.getGroup(args[0]), _("group.noSuch", args[0]));
                     contexts.removeGroup(args[0]);
@@ -722,7 +715,7 @@ var Contexts = Module("contexts", {
                 completer: function (context, args) {
                     if (args.bang)
                         return;
-                    context.filters.push(function ({ item }) !item.builtin);
+                    context.filters.push(({ item }) => !item.builtin);
                     modules.completion.group(context);
                 }
             });
@@ -798,7 +791,7 @@ var Contexts = Module("contexts", {
             context.title = ["Group"];
             let uri = modules.buffer.uri;
             context.keys = {
-                active: function (group) group.filter(uri),
+                active: group => group.filter(uri),
                 text: "name",
                 description: function (g) ["", g.filter.toJSONXML ? g.filter.toJSONXML(modules).concat("\u00a0") : "", g.description || ""]
             };
@@ -808,7 +801,7 @@ var Contexts = Module("contexts", {
             iter({ Active: true, Inactive: false }).forEach(function ([name, active]) {
                 context.split(name, null, function (context) {
                     context.title[0] = name + " Groups";
-                    context.filters.push(function ({ item }) !!item.filter(modules.buffer.uri) == active);
+                    context.filters.push(({ item }) => !!item.filter(modules.buffer.uri) == active);
                 });
             });
         };
@@ -819,4 +812,4 @@ endModule();
 
 // catch(e){ if (!e.stack) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

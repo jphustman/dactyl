@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2011-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -10,33 +10,41 @@ defineModule("cache", {
 });
 
 lazyRequire("overlay", ["overlay"]);
-lazyRequire("storage", ["File"]);
+lazyRequire("storage", ["File", "storage"]);
 
 var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
     init: function init() {
         this.queue = [];
-        this.cache = {};
+        this.storage = storage.newMap("cache", { store: true });
         this.providers = {};
         this.globalProviders = this.providers;
-        this.providing = {};
-        this.localProviders = {};
+        this.providing = RealSet();
+        this.localProviders = RealSet();
 
         if (JSMLoader.cacheFlush)
             this.flush();
 
         update(services["dactyl:"].providers, {
-            "cache": function (uri, path) {
+            "cache": (uri, path) => {
                 let contentType = "text/plain";
                 try {
-                    contentType = services.mime.getTypeFromURI(uri)
+                    contentType = services.mime.getTypeFromURI(uri);
                 }
                 catch (e) {}
 
-                if (!cache.cacheReader || !cache.cacheReader.hasEntry(path))
-                    return [contentType, cache.force(path)];
+                if (this.storage.has(path) ||
+                    !this.cacheReader ||
+                    !this.cacheReader.hasEntry(path))
+                    return [contentType, this.force(path)];
 
                 let channel = services.StreamChannel(uri);
-                channel.contentStream = cache.cacheReader.getInputStream(path);
+                try {
+                    channel.contentStream = this.cacheReader.getInputStream(path);
+                }
+                catch (e if e.result = Cr.NS_ERROR_FILE_CORRUPTED) {
+                    this.flushDiskCache();
+                    throw e;
+                }
                 channel.contentType = contentType;
                 channel.contentCharset = "UTF-8";
                 return channel;
@@ -54,7 +62,7 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
     }),
 
     parse: function parse(str) {
-        if (~'{['.indexOf(str[0]))
+        if ('{['.contains(str[0]))
             return JSON.parse(str);
         return str;
     },
@@ -71,7 +79,7 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
         let dir = File(services.directory.get("ProfD", Ci.nsIFile))
                     .child("dactyl");
         if (!dir.exists())
-            dir.create(dir.DIRECTORY_TYPE, octal(777));
+            dir.create(dir.DIRECTORY_TYPE, 0o777);
         return dir.child("cache.zip");
     }),
 
@@ -83,8 +91,7 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
             }
             catch (e if e.result == Cr.NS_ERROR_FILE_CORRUPTED) {
                 util.reportError(e);
-                this.closeWriter();
-                this.cacheFile.remove(false);
+                this.flushDiskCache();
             }
 
         return this._cacheReader;
@@ -114,7 +121,7 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
     closeReader: function closeReader() {
         if (cache._cacheReader) {
             this.cacheReader.close();
-            delete cache._cacheReader;
+            cache._cacheReader = null;
         }
     },
 
@@ -123,7 +130,7 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
 
         if (this._cacheWriter) {
             this._cacheWriter.close();
-            delete cache._cacheWriter;
+            cache._cacheWriter = null;
 
             // ZipWriter bug.
             if (this.cacheFile.fileSize <= 22)
@@ -131,10 +138,20 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
         }
     }),
 
-    flush: function flush() {
-        cache.cache = {};
+    flush: function flush(filter) {
+        if (filter) {
+            this.storage.keys().filter(filter)
+                .forEach(bind("remove", this.storage));
+        }
+        else {
+            this.storage.clear();
+            this.flushDiskCache();
+        }
+    },
+
+    flushDiskCache: function flushDiskCache() {
         if (this.cacheFile.exists()) {
-            this.closeReader();
+            this.closeWriter();
 
             this.flushJAR(this.cacheFile);
             this.cacheFile.remove(false);
@@ -155,7 +172,7 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
             cache.processQueue();
         }
 
-        delete this.cache[name];
+        this.storage.remove(name);
     },
 
     flushJAR: function flushJAR(file) {
@@ -167,65 +184,80 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
     },
 
     force: function force(name, localOnly) {
-        util.waitFor(function () !this.inQueue, this);
+        if (this.storage.has(name))
+            return this.storage.get(name);
+
+        util.waitFor(() => !this.inQueue);
 
         if (this.cacheReader && this.cacheReader.hasEntry(name)) {
-            return this.parse(File.readStream(
-                this.cacheReader.getInputStream(name)));
+            try {
+                return this.parse(File.readStream(
+                    this.cacheReader.getInputStream(name)));
+            }
+            catch (e if e.result == Cr.NS_ERROR_FILE_CORRUPTED) {
+                this.flushDiskCache();
+            }
         }
 
-        if (Set.has(this.localProviders, name) && !this.isLocal) {
-            for each (let { cache } in overlay.modules)
+        if (this.localProviders.has(name) && !this.isLocal) {
+            for (let { cache } of overlay.modules)
                 if (cache._has(name))
                     return cache.force(name, true);
         }
 
-        if (Set.has(this.providers, name)) {
-            util.assert(!Set.add(this.providing, name),
+        if (hasOwnProperty(this.providers, name)) {
+            util.assert(!this.providing.add(name),
                         "Already generating cache for " + name,
                         false);
+
+            let [func, long] = this.providers[name];
             try {
-                let [func, self] = this.providers[name];
-                this.cache[name] = func.call(self || this, name);
+                var value = func.call(this, name);
             }
             finally {
-                delete this.providing[name];
+                this.providing.delete(name);
             }
 
-            cache.queue.push([Date.now(), name]);
-            cache.processQueue();
+            if (!long)
+                this.storage.set(name, value);
+            else {
+                cache.queue.push([Date.now(), name, value]);
+                cache.processQueue();
+            }
 
-            return this.cache[name];
+            return value;
         }
 
         if (this.isLocal && !localOnly)
             return cache.force(name);
     },
 
-    get: function get(name, callback, self) {
-        if (!Set.has(this.cache, name)) {
-            if (callback && !(Set.has(this.providers, name) ||
-                              Set.has(this.localProviders, name)))
-                this.register(name, callback, self);
+    get: function get(name, callback, long) {
+        if (this.storage.has(name))
+            return this.storage.get(name);
 
-            this.cache[name] = this.force(name);
-            util.assert(this.cache[name] !== undefined,
-                        "No such cache key", false);
-        }
+        if (callback && !(hasOwnProperty(this.providers, name) ||
+                          this.localProviders.has(name)))
+            this.register(name, callback, long);
 
-        return this.cache[name];
+        var result = this.force(name);
+        util.assert(result !== undefined, "No such cache key", false);
+
+        return result;
     },
 
-    _has: function _has(name) Set.has(this.providers, name) || set.has(this.cache, name),
+    _has: function _has(name) hasOwnProperty(this.providers, name)
+                           || this.storage.has(name),
 
-    has: function has(name) [this.globalProviders, this.cache, this.localProviders]
-            .some(function (obj) Set.has(obj, name)),
+    has: function has(name) [this.globalProviders, this.localProviders]
+            .some(obj => isinstance(obj, ["Set"]) ? obj.has(name)
+                                                  : hasOwnProperty(obj, name)),
 
-    register: function register(name, callback, self) {
+    register: function register(name, callback, long) {
         if (this.isLocal)
-            Set.add(this.localProviders, name);
+            this.localProviders.add(name);
 
-        this.providers[name] = [callback, self];
+        this.providers[name] = [callback, long];
     },
 
     processQueue: function processQueue() {
@@ -234,16 +266,21 @@ var Cache = Module("Cache", XPCOM(Ci.nsIRequestObserver), {
 
         if (this.queue.length && !this.inQueue) {
             // removeEntry does not work properly with queues.
-            for each (let [, entry] in this.queue)
+            let removed = 0;
+            for (let [, entry] of this.queue)
                 if (this.getCacheWriter().hasEntry(entry)) {
                     this.getCacheWriter().removeEntry(entry, false);
-                    this.closeWriter();
+                    removed++;
                 }
+            if (removed) {
+                this.closeWriter();
+                util.flushCache(this.cacheFile);
+            }
 
-            this.queue.splice(0).forEach(function ([time, entry]) {
-                if (time && Set.has(this.cache, entry)) {
+            this.queue.splice(0).forEach(function ([time, entry, value]) {
+                if (time && value != null) {
                     let stream = services.CharsetConv("UTF-8")
-                                         .convertToInputStream(this.stringify(this.cache[entry]));
+                                         .convertToInputStream(this.stringify(value));
 
                     this.getCacheWriter().addEntryStream(entry, time * 1000,
                                                          this.compression, stream,
@@ -265,4 +302,4 @@ endModule();
 
 // catch(e){ if (typeof e === "string") e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 sts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

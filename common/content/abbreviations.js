@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2009 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2010 by anekos <anekos@snca.net>
-// Copyright (c) 2010-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2010-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -64,7 +64,7 @@ var Abbreviation = Class("Abbreviation", {
      * @param {Mode} mode The mode to test.
      * @returns {boolean} The result of the comparison.
      */
-    inMode: function (mode) this.modes.some(function (_mode) _mode == mode),
+    inMode: function (mode) this.modes.some(m => m == mode),
 
     /**
      * Returns true if this abbreviation is defined in any of *modes*.
@@ -72,7 +72,7 @@ var Abbreviation = Class("Abbreviation", {
      * @param {[Modes]} modes The modes to test.
      * @returns {boolean} The result of the comparison.
      */
-    inModes: function (modes) modes.some(function (mode) this.inMode(mode), this),
+    inModes: function (modes) modes.some(mode => this.inMode(mode)),
 
     /**
      * Remove *mode* from the list of supported modes for this abbreviation.
@@ -80,7 +80,8 @@ var Abbreviation = Class("Abbreviation", {
      * @param {Mode} mode The mode to remove.
      */
     removeMode: function (mode) {
-        this.modes = this.modes.filter(function (m) m != mode).sort();
+        this.modes = this.modes.filter(m => m != mode)
+                               .sort();
     },
 
     /**
@@ -90,7 +91,7 @@ var Abbreviation = Class("Abbreviation", {
     get modeChar() Abbreviation.modeChar(this.modes)
 }, {
     modeChar: function (_modes) {
-        let result = array.uniq(_modes.map(function (m) m.char)).join("");
+        let result = array.uniq(_modes.map(m => m.char)).join("");
         if (result == "ci")
             result = "!";
         return result;
@@ -104,7 +105,7 @@ var AbbrevHive = Class("AbbrevHive", Contexts.Hive, {
     },
 
     /** @property {boolean} True if there are no abbreviations. */
-    get empty() !values(this._store).nth(util.identity, 0),
+    get empty() !values(this._store).find(util.identity),
 
     /**
      * Adds a new abbreviation.
@@ -131,7 +132,8 @@ var AbbrevHive = Class("AbbrevHive", Contexts.Hive, {
      */
     get: function (mode, lhs) {
         let abbrevs = this._store[mode];
-        return abbrevs && Set.has(abbrevs, lhs) ? abbrevs[lhs] : null;
+        return abbrevs && hasOwnProperty(abbrevs, lhs) ? abbrevs[lhs]
+                                                       : null;
     },
 
     /**
@@ -142,7 +144,7 @@ var AbbrevHive = Class("AbbrevHive", Contexts.Hive, {
         // Wth? --Kris;
         let map = values(this._store).map(Iterator).map(iter.toArray)
                                      .flatten().toObject();
-        return Object.keys(map).sort().map(function (k) map[k]);
+        return Object.keys(map).sort().map(k => map[k]);
     },
 
     /**
@@ -213,24 +215,28 @@ var Abbreviations = Module("abbreviations", {
             nonkeyword: /[   "']/
         };
 
-        this._match = util.regexp(literal(/*
+        this._match = util.regexp(literal(function () /*
             (^ | \s | <nonkeyword>) (<keyword>+             )$ | // full-id
             (^ | \s | <keyword>   ) (<nonkeyword>+ <keyword>)$ | // end-id
             (^ | \s               ) (\S* <nonkeyword>       )$   // non-id
-        */), "x", params);
-        this._check = util.regexp(literal(/*
+        */$), "x", params);
+        this._check = util.regexp(literal(function () /*
             ^ (?:
               <keyword>+              | // full-id
               <nonkeyword>+ <keyword> | // end-id
               \S* <nonkeyword>          // non-id
             ) $
-        */), "x", params);
+        */$), "x", params);
     },
 
-    get: deprecated("group.abbrevs.get", { get: function get() this.user.closure.get }),
-    set: deprecated("group.abbrevs.set", { get: function set() this.user.closure.set }),
-    remove: deprecated("group.abbrevs.remove", { get: function remove() this.user.closure.remove }),
-    removeAll: deprecated("group.abbrevs.clear", { get: function removeAll() this.user.closure.clear }),
+    get allHives() contexts.allGroups.abbrevs,
+
+    get userHives() this.allHives.filter(h => h !== this.builtin),
+
+    get: deprecated("group.abbrevs.get", { get: function get() this.user.bound.get }),
+    set: deprecated("group.abbrevs.set", { get: function set() this.user.bound.set }),
+    remove: deprecated("group.abbrevs.remove", { get: function remove() this.user.bound.remove }),
+    removeAll: deprecated("group.abbrevs.clear", { get: function removeAll() this.user.bound.clear }),
 
     /**
      * Returns the abbreviation for the given *mode* if *text* matches the
@@ -244,7 +250,8 @@ var Abbreviations = Module("abbreviations", {
     match: function (mode, text) {
         let match = this._match.exec(text);
         if (match)
-            return this.hives.map(function (h) h.get(mode, match[2] || match[4] || match[6])).nth(util.identity, 0);
+            return this.hives.map(h => h.get(mode, match[2] || match[4] || match[6]))
+                       .find(util.identity);
         return null;
     },
 
@@ -257,10 +264,10 @@ var Abbreviations = Module("abbreviations", {
      * @optional
      */
     list: function (modes, lhs, hives) {
-        let hives = hives || contexts.allGroups.abbrevs.filter(function (h) !h.empty);
+        hives = (hives || this.userHives).filter(h => !h.empty);
 
         function abbrevs(hive)
-            hive.merged.filter(function (abbr) (abbr.inModes(modes) && abbr.lhs.indexOf(lhs) == 0));
+            hive.merged.filter(ab => (ab.inModes(modes) && ab.lhs.startsWith(lhs)));
 
         let list = ["table", {},
                 ["tr", { highlight: "Title" },
@@ -269,9 +276,9 @@ var Abbreviations = Module("abbreviations", {
                     ["td", { style: "padding-right: 1em;" }, _("title.Abbrev")],
                     ["td", { style: "padding-right: 1em;" }, _("title.Replacement")]],
                 ["col", { style: "min-width: 6em; padding-right: 1em;" }],
-                hives.map(function (hive) let (i = 0) [
+                hives.map(hive => let (i = 0) [
                     ["tr", { style: "height: .5ex;" }],
-                    abbrevs(hive).map(function (abbrev)
+                    abbrevs(hive).map(abbrev =>
                         ["tr", {},
                             ["td", { highlight: "Title" }, !i++ ? String(hive.name) : ""],
                             ["td", {}, abbrev.modeChar],
@@ -298,7 +305,8 @@ var Abbreviations = Module("abbreviations", {
     completion: function initCompletion() {
         completion.abbreviation = function abbreviation(context, modes, group) {
             group = group || abbreviations.user;
-            let fn = modes ? function (abbr) abbr.inModes(modes) : util.identity;
+            let fn = modes ? abbr => abbr.inModes(modes)
+                           : abbr => abbr;
             context.keys = { text: "lhs" , description: "rhs" };
             context.completions = group.merged.filter(fn);
         };
@@ -341,18 +349,22 @@ var Abbreviations = Module("abbreviations", {
                             description: "Expand this abbreviation by evaluating its right-hand-side as JavaScript"
                         }
                     ],
-                    serialize: function () [
-                        {
-                            command: this.name,
-                            arguments: [abbr.lhs],
-                            literalArg: abbr.rhs,
-                            options: {
-                                "-javascript": abbr.rhs ? null : undefined
+                    serialize: function () array(abbreviations.userHives)
+                        .filter(h => h.persist)
+                        .map(hive => [
+                            {
+                                command: this.name,
+                                arguments: [abbr.lhs],
+                                literalArg: abbr.rhs,
+                                options: {
+                                    "-group": hive.name == "user" ? undefined : hive.name,
+                                    "-javascript": callable(abbr.rhs) ? null : undefined
+                                }
                             }
-                        }
-                        for ([, abbr] in Iterator(abbreviations.user.merged))
-                        if (abbr.modesEqual(modes))
-                    ]
+                            for ([, abbr] in Iterator(hive.merged))
+                            if (abbr.modesEqual(modes))
+                        ]).
+                        flatten().array
                 });
 
             commands.add([ch + "una[bbreviate]"],
@@ -380,4 +392,4 @@ var Abbreviations = Module("abbreviations", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

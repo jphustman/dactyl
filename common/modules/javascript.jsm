@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -55,9 +55,10 @@ var JavaScript = Module("javascript", {
 
     lazyInit: true,
 
-    newContext: function () this.modules.newContext(this.modules.userContext, true, "Dactyl JS Temp Context"),
+    newContext: function () this.modules.newContext(this.modules.userContext, false,
+                                                    "Dactyl JS Temp Context"),
 
-    completers: Class.Memoize(function () Object.create(JavaScript.completers)),
+    completers: Class.Memoize(() => Object.create(JavaScript.completers)),
 
     // Some object members are only accessible as function calls
     getKey: function (obj, key) {
@@ -72,22 +73,23 @@ var JavaScript = Module("javascript", {
         if (obj == null)
             return;
 
-        let seen = isinstance(obj, ["Sandbox"]) ? Set(JavaScript.magicalNames) : {};
+        let seen = RealSet(isinstance(obj, ["Sandbox"]) ? JavaScript.magicalNames : []);
         let globals = values(toplevel && this.window === obj ? this.globalNames : []);
 
         if (toplevel && isObject(obj) && "wrappedJSObject" in obj)
-            if (!Set.add(seen, "wrappedJSObject"))
+            if (!seen.add("wrappedJSObject"))
                 yield "wrappedJSObject";
 
-        for (let key in iter(globals, properties(obj, !toplevel, true)))
-            if (!Set.add(seen, key))
+        for (let key in iter(globals, properties(obj, !toplevel)))
+            if (!seen.add(key))
                 yield key;
 
         // Properties aren't visible in an XPCNativeWrapper until
         // they're accessed.
-        for (let key in properties(this.getKey(obj, "wrappedJSObject"), !toplevel, true))
+        for (let key in properties(this.getKey(obj, "wrappedJSObject"),
+                                   !toplevel))
             try {
-                if (key in obj && !Set.has(seen, key))
+                if (key in obj && !seen.has(key))
                     yield key;
             }
             catch (e) {}
@@ -273,7 +275,7 @@ var JavaScript = Module("javascript", {
 
     // Don't eval any function calls unless the user presses tab.
     _checkFunction: function (start, end, key) {
-        let res = this._functions.some(function (idx) idx >= start && idx < end);
+        let res = this._functions.some(idx => (idx >= start && idx < end));
         if (!res || this.context.tabPressed || key in this.cache.evalled)
             return false;
         this.context.waitingForTab = true;
@@ -336,20 +338,17 @@ var JavaScript = Module("javascript", {
     _complete: function (objects, key, compl, string, last) {
         const self = this;
 
-        if (!getOwnPropertyNames && !services.debugger.isOn && !this.context.message)
-            this.context.message = /*L*/"For better completion data, please enable the JavaScript debugger (:set jsdebugger)";
-
         let base = this.context.fork("js", this._top.offset);
         base.forceAnchored = true;
         base.filter = last == null ? key : string;
         let prefix  = last != null ? key : "";
 
         if (last == null) // We're not looking for a quoted string, so filter out anything that's not a valid identifier
-            base.filters.push(function (item) /^[a-zA-Z_$][\w$]*$/.test(item.text));
+            base.filters.push(item => /^[a-zA-Z_$][\w$]*$/.test(item.text));
         else {
-            base.quote = [last, function (text) util.escapeString(text, ""), last];
+            base.quote = [last, text => util.escapeString(text, ""), last];
             if (prefix)
-                base.filters.push(function (item) item.item.indexOf(prefix) === 0);
+                base.filters.push(item => item.item.startsWith(prefix));
         }
 
         if (!compl) {
@@ -371,7 +370,8 @@ var JavaScript = Module("javascript", {
             };
 
             base.keys = {
-                text: prefix ? function (text) text.substr(prefix.length) : util.identity,
+                text: prefix ? text => text.substr(prefix.length)
+                             : text => text,
                 description: function (item) self.getKey(this.obj, item),
                 key: function (item) {
                     if (!isNaN(key))
@@ -389,7 +389,7 @@ var JavaScript = Module("javascript", {
         objects.forEach(function (obj) {
             let context = base.fork(obj[1]);
             context.title = [obj[1]];
-            context.keys.obj = function () obj[0];
+            context.keys.obj = () => obj[0];
             context.key = obj[1] + last;
             if (obj[0] == this.cache.evalContext)
                 context.regenerate = true;
@@ -397,8 +397,8 @@ var JavaScript = Module("javascript", {
             obj.ctxt_t = context.fork("toplevel");
             if (!compl) {
                 obj.ctxt_p = context.fork("prototypes");
-                obj.ctxt_t.generate = function () self.objectKeys(obj[0], true);
-                obj.ctxt_p.generate = function () self.objectKeys(obj[0], false);
+                obj.ctxt_t.generate = () => self.objectKeys(obj[0], true);
+                obj.ctxt_p.generate = () => self.objectKeys(obj[0], false);
             }
         }, this);
 
@@ -463,7 +463,7 @@ var JavaScript = Module("javascript", {
         }
 
         this.context.getCache("evalled", Object);
-        this.context.getCache("evalContext", this.closure.newContext);
+        this.context.getCache("evalContext", this.bound.newContext);
 
         // Okay, have parse stack. Figure out what we're completing.
 
@@ -491,7 +491,7 @@ var JavaScript = Module("javascript", {
                         let [, prefix, args] = /^(function .*?)\((.*?)\)/.exec(Function.prototype.toString.call(func));
                         let n = this._get(i).comma.length;
                         args = template.map(Iterator(args.split(", ")),
-                            function ([i, arg]) ["span", { highlight: i == n ? "Filter" : "" }, arg],
+                            ([i, arg]) => ["span", { highlight: i == n ? "Filter" : "" }, arg],
                             ",\u00a0");
                         this.context.message = ["", prefix + "(", args, ")"];
                     }
@@ -563,7 +563,7 @@ var JavaScript = Module("javascript", {
                 for (let [i, idx] in Iterator(this._get(-2).comma)) {
                     let arg = this._str.substring(prev + 1, idx);
                     prev = idx;
-                    memoize(args, i, function () self.evalled(arg));
+                    memoize(args, i, () => self.evalled(arg));
                 }
                 let key = this._getKey();
                 args.push(key + string);
@@ -634,14 +634,14 @@ var JavaScript = Module("javascript", {
         "ROCSSPrimitiveValue", "RangeError", "ReferenceError", "RegExp",
         "StopIteration", "String", "SyntaxError", "TypeError", "URIError",
         "Uint16Array", "Uint32Array", "Uint8Array", "XML", "XMLHttpProgressEvent",
-        "XMLList", "XMLSerializer", "XPCNativeWrapper", "XPCSafeJSWrapper",
+        "XMLList", "XMLSerializer", "XPCNativeWrapper",
         "XULControllers", "constructor", "decodeURI", "decodeURIComponent",
         "encodeURI", "encodeURIComponent", "escape", "eval", "isFinite", "isNaN",
         "isXMLName", "parseFloat", "parseInt", "undefined", "unescape", "uneval"
     ].concat([k.substr(6) for (k in keys(Ci)) if (/^nsIDOM/.test(k))])
      .concat([k.substr(3) for (k in keys(Ci)) if (/^nsI/.test(k))])
      .concat(this.magicalNames)
-     .filter(function (k) k in self.window))),
+     .filter(k => k in self.window))),
 
 }, {
     EVAL_TMP: "__dactyl_eval_tmp",
@@ -693,7 +693,7 @@ var JavaScript = Module("javascript", {
     completion: function (dactyl, modules, window) {
         const { completion } = modules;
         update(modules.completion, {
-            get javascript() modules.javascript.closure.complete,
+            get javascript() modules.javascript.bound.complete,
             javascriptCompleter: JavaScript // Backwards compatibility
         });
     },
@@ -765,18 +765,17 @@ var JavaScript = Module("javascript", {
             init: function init(context) {
                 init.supercall(this);
 
-                let self = this;
                 let sandbox = true || isinstance(context, ["Sandbox"]);
 
                 this.context = modules.newContext(context, !sandbox, "Dactyl REPL Context");
                 this.js = modules.JavaScript();
                 this.js.replContext = this.context;
-                this.js.newContext = function newContext() modules.newContext(self.context, !sandbox, "Dactyl REPL Temp Context");
+                this.js.newContext = () => modules.newContext(this.context, !sandbox, "Dactyl REPL Temp Context");
 
                 this.js.globals = [
                    [this.context, /*L*/"REPL Variables"],
                    [context, /*L*/"REPL Global"]
-                ].concat(this.js.globals.filter(function ([global]) isPrototypeOf.call(global, context)));
+                ].concat(this.js.globals.filter(([global]) => isPrototypeOf.call(global, context)));
 
                 if (!isPrototypeOf.call(modules.jsmodules, context))
                     this.js.toplevel = context;
@@ -784,7 +783,7 @@ var JavaScript = Module("javascript", {
                 if (!isPrototypeOf.call(window, context))
                     this.js.window = context;
 
-                if (this.js.globals.slice(2).some(function ([global]) global === context))
+                if (this.js.globals.slice(2).some(([global]) => global === context))
                     this.js.globals.splice(1);
 
                 this.repl = REPL(this.context);
@@ -822,8 +821,10 @@ var JavaScript = Module("javascript", {
 
             leave: function leave(params) {
                 leave.superapply(this, arguments);
-                if (!params.push)
+                if (!params.push) {
                     modes.delay(function () { modes.pop(); });
+                    Cu.nukeSandbox(this.context);
+                }
             },
 
             updatePrompt: function updatePrompt() {
@@ -856,8 +857,7 @@ var JavaScript = Module("javascript", {
     mappings: function initMappings(dactyl, modules, window) {
         const { mappings, modes } = modules;
 
-        function bind() mappings.add.apply(mappings,
-                                           [[modes.REPL]].concat(Array.slice(arguments)))
+        function bind(...args) mappings.add.apply(mappings, [[modes.REPL]].concat(args))
 
         bind(["<Return>"], "Accept the current input",
              function ({ self }) { self.accept(); });
@@ -879,20 +879,6 @@ var JavaScript = Module("javascript", {
 
         bind(["<C-b>", "<PageUp>"], "Scroll up half a page",
              function ({ self }) { self.repl.scrollVertical("pages", -1); });
-    },
-    options: function initOptions(dactyl, modules, window) {
-        modules.options.add(["jsdebugger", "jsd"],
-            "Enable the JavaScript debugger service for use in JavaScript completion",
-            "boolean", false, {
-                setter: function (value) {
-                    if (services.debugger.isOn != value)
-                        if (value)
-                            (services.debugger.asyncOn || services.debugger.on)(null);
-                        else
-                            services.debugger.off();
-                },
-                getter: function () services.debugger.isOn
-            });
     }
 });
 
@@ -900,4 +886,4 @@ endModule();
 
 } catch(e){ if (!e.stack) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

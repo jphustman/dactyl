@@ -1,4 +1,4 @@
-// Copyright (c) 2009-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2009-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -12,6 +12,8 @@ defineModule("main", {
 });
 
 var BASE = "resource://dactyl-content/";
+
+var global = this;
 
 /**
  * @class ModuleBase
@@ -65,14 +67,13 @@ var Modules = function Modules(window) {
      *
      * @returns {function} The constructor for the resulting module.
      */
-    function Module(name) {
-        let args = Array.slice(arguments);
+    function Module(name, ...args) {
 
         var base = ModuleBase;
-        if (callable(args[1]))
-            base = args.splice(1, 1)[0];
+        if (callable(args[0]))
+            base = args.shift();
 
-        let [, prototype, classProperties, moduleInit] = args;
+        let [prototype, classProperties, moduleInit] = args;
         prototype._metaInit_ = function () {
             delete module.prototype._metaInit_;
             Class.replaceProperty(modules, module.className, this);
@@ -90,21 +91,54 @@ var Modules = function Modules(window) {
     Module.list = [];
     Module.constructors = {};
 
-    const create = window.Object.create.bind(window.Object);
+    function newContext(proto, normal, name) {
+        if (normal)
+            return create(proto);
+
+        sandbox = Components.utils.Sandbox(window, { sandboxPrototype: proto || modules,
+                                                     sandboxName: name || ("Dactyl Sandbox " + ++_id),
+                                                     wantXrays: true });
+
+        // Hack:
+        // sandbox.Object = jsmodules.Object;
+        sandbox.File = global.File;
+        sandbox.Math = global.Math;
+        sandbox.Set  = global.Set;
+        return sandbox;
+    };
 
 
     const BASES = [BASE, "resource://dactyl-local-content/"];
 
-    jsmodules = Cu.createObjectIn(window);
+    let proxyCache = {};
+    var proxy = new Proxy(window, {
+        get: function window_get(target, prop) {
+            // `in`, not `hasOwnProperty`, because we want to return
+            // unbound methods in `Object.prototype`
+            if (prop in proxyCache)
+                return proxyCache[prop];
+
+            let p = target[prop];
+            if (callable(p))
+                return proxyCache[prop] = p.bind(target);
+
+            return p;
+        },
+
+        set: function window_set(target, prop, val) {
+            return target[prop] = val;
+        }
+    });
+
+    var jsmodules = newContext(proxy, false, "Dactyl `jsmodules`");
     jsmodules.NAME = "jsmodules";
+
+    const create = bind("create", jsmodules.Object);
+
     const modules = update(create(jsmodules), {
         yes_i_know_i_should_not_report_errors_in_these_branches_thanks: [],
 
         jsmodules: jsmodules,
-
-        get content() this.config.browser.contentWindow || window.content,
-
-        window: window,
 
         Module: Module,
 
@@ -130,30 +164,13 @@ var Modules = function Modules(window) {
             }
         },
 
-        newContext: function newContext(proto, normal, name) {
-            if (normal)
-                return create(proto);
-
-            if (services.has("dactyl") && services.dactyl.createGlobal)
-                var sandbox = services.dactyl.createGlobal();
-            else
-                sandbox = Components.utils.Sandbox(window, { sandboxPrototype: proto || modules,
-                                                             sandboxName: name || ("Dactyl Sandbox " + ++_id),
-                                                             wantXrays: false });
-
-            // Hack:
-            // sandbox.Object = jsmodules.Object;
-            sandbox.File = jsmodules.File;
-            sandbox.Math = jsmodules.Math;
-            sandbox.__proto__ = proto || modules;
-            return sandbox;
-        },
+        newContext: newContext,
 
         get ownPropertyValues() array.compact(
                 Object.getOwnPropertyNames(this)
-                      .map(function (name) Object.getOwnPropertyDescriptor(this, name).value, this)),
+                      .map(name => Object.getOwnPropertyDescriptor(this, name).value)),
 
-        get moduleList() this.ownPropertyValues.filter(function (mod) mod instanceof this.ModuleBase || mod.isLocalModule, this)
+        get moduleList() this.ownPropertyValues.filter(mod => (mod instanceof this.ModuleBase || mod.isLocalModule))
     });
 
     modules.plugins = create(modules);
@@ -163,20 +180,27 @@ var Modules = function Modules(window) {
 
 config.loadStyles();
 
-overlay.overlayWindow(Object.keys(config.overlays), function _overlay(window) ({
+overlay.overlayWindow(Object.keys(config.overlays),
+                      function _overlay(window) ({
     ready: function onInit(document) {
         const modules = Modules(window);
         modules.moduleManager = this;
         this.modules = modules;
+        this.jsmodules = modules.jsmodules;
 
         window.dactyl = { modules: modules };
 
         defineModule.time("load", null, function _load() {
             config.modules.global
-                  .forEach(function (name) defineModule.time("load", name, require, null, name, modules.jsmodules));
+                  .forEach(function (name) {
+                      if (!isArray(name))
+                          defineModule.time("load", name, require, null, name, modules.jsmodules);
+                      else
+                          lazyRequire(name[0], name.slice(1), modules.jsmodules);
+                  });
 
             config.modules.window
-                  .forEach(function (name) defineModule.time("load", name, modules.load, modules, name));
+                  .forEach(name => { defineModule.time("load", name, modules.load, modules, name); });
         }, this);
     },
 
@@ -188,8 +212,8 @@ overlay.overlayWindow(Object.keys(config.overlays), function _overlay(window) ({
 
         this.startTime = Date.now();
         this.deferredInit = { load: {} };
-        this.seen = {};
-        this.loaded = {};
+        this.seen = RealSet();
+        this.loaded = RealSet();
         modules.loaded = this.loaded;
 
         this.modules = modules;
@@ -221,11 +245,13 @@ overlay.overlayWindow(Object.keys(config.overlays), function _overlay(window) ({
     },
 
     cleanup: function cleanup(window) {
-        overlay.windows = overlay.windows.filter(function (w) w != window);
+        overlay.windows.delete(window);
+
+        Cu.nukeSandbox(this.jsmodules);
     },
 
     unload: function unload(window) {
-        for each (let mod in this.modules.moduleList.reverse()) {
+        for (let mod of this.modules.moduleList.reverse()) {
             mod.stale = true;
 
             if ("destroy" in mod)
@@ -240,7 +266,7 @@ overlay.overlayWindow(Object.keys(config.overlays), function _overlay(window) ({
 
         defineModule.loadLog.push("Loaded in " + (Date.now() - this.startTime) + "ms");
 
-        overlay.windows = array.uniq(overlay.windows.concat(window), true);
+        overlay.windows.add(window);
     },
 
     loadModule: function loadModule(module, prereq, frame) {
@@ -254,10 +280,10 @@ overlay.overlayWindow(Object.keys(config.overlays), function _overlay(window) ({
         }
 
         try {
-            if (Set.has(loaded, module.className))
+            if (loaded.has(module.className))
                 return;
 
-            if (Set.add(seen, module.className))
+            if (seen.add(module.className))
                 throw Error("Module dependency loop.");
 
             for (let dep in values(module.requires))
@@ -273,9 +299,9 @@ overlay.overlayWindow(Object.keys(config.overlays), function _overlay(window) ({
             let obj = defineModule.time(module.className, "init", module);
             Class.replaceProperty(modules, module.className, obj);
 
-            Set.add(loaded, module.className);
+            loaded.add(module.className);
 
-            if (loaded.dactyl && obj.signals)
+            if (loaded.has("dactyl") && obj.signals)
                 modules.dactyl.registerObservers(obj);
 
             if (!module.lazyDepends)
@@ -296,7 +322,7 @@ overlay.overlayWindow(Object.keys(config.overlays), function _overlay(window) ({
 
         let className = mod.className || mod.constructor.className;
 
-        if (!Set.has(init, className)) {
+        if (!hasOwnProperty(init, className)) {
             init[className] = function callee() {
                 function finish() {
                     this.currentDependency = className;
@@ -317,25 +343,25 @@ overlay.overlayWindow(Object.keys(config.overlays), function _overlay(window) ({
     },
 
     scanModules: function scanModules() {
-        let self = this;
         let { Module, modules } = this.modules;
 
-        defineModule.modules.forEach(function defModule(mod) {
-            let names = Set(Object.keys(mod.INIT));
+        defineModule.modules.forEach((mod) => {
+            let names = RealSet(Object.keys(mod.INIT));
             if ("init" in mod.INIT)
-                Set.add(names, "init");
+                names.add("init");
 
-            keys(names).forEach(function (name) { self.deferInit(name, mod.INIT, mod); });
+            for (let name of names)
+                this.deferInit(name, mod.INIT, mod);
         });
 
-        Module.list.forEach(function frobModule(mod) {
+        Module.list.forEach((mod) => {
             if (!mod.frobbed) {
-                modules.__defineGetter__(mod.className, function () {
+                modules.__defineGetter__(mod.className, () => {
                     delete modules[mod.className];
-                    return self.loadModule(mod.className, null, Components.stack.caller);
+                    return this.loadModule(mod.className, null, Components.stack.caller);
                 });
                 Object.keys(mod.prototype.INIT)
-                      .forEach(function (name) { self.deferInit(name, mod.prototype.INIT, mod); });
+                      .forEach((name) => { this.deferInit(name, mod.prototype.INIT, mod); });
             }
             mod.frobbed = true;
         });
@@ -352,4 +378,4 @@ endModule();
 
 } catch(e){ if (!e.stack) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

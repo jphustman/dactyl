@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -30,9 +30,11 @@ var CommandWidgets = Class("CommandWidgets", {
                                 id: "dactyl-container", highlight: "CmdLine CmdCmdLine" },
                         ["textbox", { class: "plain", id: "dactyl-strut",   flex: "1", crop: "end", collapsed: "true" }],
                         ["textbox", { class: "plain", id: "dactyl-mode",    flex: "1", crop: "end" }],
-                        ["textbox", { class: "plain", id: "dactyl-message", flex: "1", readonly: "true" }],
+                        ["hbox", { id: "dactyl-message-box" },
+                            ["label", { class: "plain", id: "dactyl-message-pre", flex: "0", readonly: "true", highlight: "WarningMsg" }],
+                            ["textbox", { class: "plain", id: "dactyl-message", flex: "1", readonly: "true" }]],
 
-                        ["hbox", { id: "dactyl-commandline", hidden: "false", foo: "bar", class: "dactyl-container", highlight: "Normal CmdNormal", collapsed: "true" },
+                        ["hbox", { id: "dactyl-commandline", hidden: "false", class: "dactyl-container", highlight: "Normal CmdNormal", collapsed: "true" },
                             ["label", {   id: "dactyl-commandline-prompt",  class: "dactyl-commandline-prompt  plain", flex: "0", crop: "end", value: "", collapsed: "true" }],
                             ["textbox", { id: "dactyl-commandline-command", class: "dactyl-commandline-command plain", flex: "1", type: "input", timeout: "100",
                                           highlight: "Events" }]]],
@@ -52,7 +54,7 @@ var CommandWidgets = Class("CommandWidgets", {
                     ["vbox", { id: "dactyl-completions-" + s + "commandline-container", class: "dactyl-container", hidden: "false", collapsed: "true" },
                         ["iframe", { class: "dactyl-completions", id: "dactyl-completions-" + s + "commandline", src: "dactyl://content/buffer.xhtml",
                                      contextmenu: "dactyl-contextmenu", flex: "1", hidden: "false", collapsed: "false", highlight: "Events",
-                                     events: "mowEvents" }]]]],
+                                     events: "mowEvents" }]]]]
         });
 
         this.elements = {};
@@ -124,10 +126,24 @@ var CommandWidgets = Class("CommandWidgets", {
                     return this.statusbar;
 
                 let statusElem = this.statusbar.message;
-                if (value && !value[2] && statusElem.editor && statusElem.editor.rootElement.scrollWidth > statusElem.scrollWidth)
+                // Currently doesn't work as expected with <hbox> parent.
+                if (false && value && !value[2] && statusElem.editor && statusElem.editor.rootElement.scrollWidth > statusElem.scrollWidth)
                     return this.commandbar;
                 return this.activeGroup.mode;
             }
+        });
+
+        this.addElement({
+            name: "message-pre",
+            defaultGroup: "WarningMsg",
+            getGroup: function () this.activeGroup.message
+        });
+
+        this.addElement({
+            name: "message-box",
+            defaultGroup: "Normal",
+            getGroup: function () this.activeGroup.message,
+            getValue: function () this.message
         });
 
         this.addElement({
@@ -151,11 +167,11 @@ var CommandWidgets = Class("CommandWidgets", {
 
         function get(prefix, map, id) (obj.getElement || util.identity)(map[id] || document.getElementById(prefix + id));
 
-        this.active.__defineGetter__(obj.name, function () self.activeGroup[obj.name][obj.name]);
-        this.activeGroup.__defineGetter__(obj.name, function () self.getGroup(obj.name));
+        this.active.__defineGetter__(obj.name, () => this.activeGroup[obj.name][obj.name]);
+        this.activeGroup.__defineGetter__(obj.name, () => this.getGroup(obj.name));
 
-        memoize(this.statusbar, obj.name, function () get("dactyl-statusline-field-", statusline.widgets, (obj.id || obj.name)));
-        memoize(this.commandbar, obj.name, function () get("dactyl-", {}, (obj.id || obj.name)));
+        memoize(this.statusbar, obj.name, () => get("dactyl-statusline-field-", statusline.widgets, (obj.id || obj.name)));
+        memoize(this.commandbar, obj.name, () => get("dactyl-", {}, (obj.id || obj.name)));
 
         if (!(obj.noValue || obj.getValue)) {
             Object.defineProperty(this, obj.name, Modes.boundProperty({
@@ -183,7 +199,7 @@ var CommandWidgets = Class("CommandWidgets", {
                             highlight.highlightNode(elem,
                                 (val[0] != null ? val[0] : obj.defaultGroup)
                                     .split(/\s/).filter(util.identity)
-                                    .map(function (g) g + " " + nodeSet.group + g)
+                                    .map(g => g + " " + nodeSet.group + g)
                                     .join(" "));
                             elem.value = val[1];
                             if (obj.onChange)
@@ -201,7 +217,8 @@ var CommandWidgets = Class("CommandWidgets", {
                 let elem = nodeSet[obj.name];
                 if (elem)
                     highlight.highlightNode(elem, obj.defaultGroup.split(/\s/)
-                                                     .map(function (g) g + " " + nodeSet.group + g).join(" "));
+                                                     .map(g => g + " " + nodeSet.group + g)
+                                                     .join(" "));
             });
         }
     },
@@ -237,24 +254,16 @@ var CommandWidgets = Class("CommandWidgets", {
         // choose which element to select.
         function check(node) {
             if (DOM(node).style.display === "-moz-stack") {
-                let nodes = Array.filter(node.children, function (n) !n.collapsed && n.boxObject.height);
-                nodes.forEach(function (node, i) { node.style.opacity = (i == nodes.length - 1) ? "" : "0" });
+                let nodes = Array.filter(node.children, n => !n.collapsed && n.boxObject.height);
+                nodes.forEach((node, i) => {
+                    node.style.opacity = (i == nodes.length - 1) ? "" : "0";
+                });
             }
             Array.forEach(node.children, check);
         }
         [this.commandbar.container, this.statusbar.container].forEach(check);
 
-        // Work around a redrawing bug.
-        if (changed && util.haveGecko("16")) {
-            util.delay(function () {
-                // Urgh.
-                statusline.statusBar.style.paddingRight = "1px";
-                DOM(statusline.statusBar).rect; // Force reflow.
-                statusline.statusBar.style.paddingRight = "";
-            }, 0);
-        }
-
-        if (this.initialized && loaded.mow && mow.visible)
+        if (this.initialized && loaded.has("mow") && mow.visible)
             mow.resize(false);
     },
 
@@ -293,13 +302,14 @@ var CommandWidgets = Class("CommandWidgets", {
         return document.getElementById("dactyl-contextmenu");
     }),
 
-    multilineOutput: Class.Memoize(function () this._whenReady("dactyl-multiline-output", function (elem) {
+    multilineOutput: Class.Memoize(function () this._whenReady("dactyl-multiline-output",
+                                                               elem => {
         highlight.highlightNode(elem.contentDocument.body, "MOW");
     }), true),
 
-    multilineInput: Class.Memoize(function () document.getElementById("dactyl-multiline-input")),
+    multilineInput: Class.Memoize(() => document.getElementById("dactyl-multiline-input")),
 
-    mowContainer: Class.Memoize(function () document.getElementById("dactyl-multiline-output-container"))
+    mowContainer: Class.Memoize(() => document.getElementById("dactyl-multiline-output-container"))
 }, {
     getEditor: function getEditor(elem) {
         elem.inputField.QueryInterface(Ci.nsIDOMNSEditableElement);
@@ -331,7 +341,7 @@ var CommandMode = Class("CommandMode", {
                       false);
 
         this.messageCount = commandline.messageCount;
-        modes.push(this.mode, this.extendedMode, this.closure);
+        modes.push(this.mode, this.extendedMode, this.bound);
 
         this.widgets.active.commandline.collapsed = false;
         this.widgets.prompt = this.prompt;
@@ -472,9 +482,9 @@ var CommandPromptMode = Class("CommandPromptMode", CommandMode, {
         init.supercall(this);
     },
 
-    complete: function CPM_complete(context) {
+    complete: function CPM_complete(context, ...args) {
         if (this.completer)
-            context.forkapply("prompt", 0, this, "completer", Array.slice(arguments, 1));
+            context.forkapply("prompt", 0, this, "completer", args);
     },
 
     get mode() modes.PROMPT
@@ -488,8 +498,6 @@ var CommandPromptMode = Class("CommandPromptMode", CommandMode, {
  */
 var CommandLine = Module("commandline", {
     init: function init() {
-        const self = this;
-
         this._callbacks = {};
 
         memoize(this, "_store", function () storage.newMap("command-history", { store: true, privateData: true }));
@@ -598,7 +606,7 @@ var CommandLine = Module("commandline", {
         }, this);
     },
 
-    widgets: Class.Memoize(function () CommandWidgets()),
+    widgets: Class.Memoize(() => CommandWidgets()),
 
     runSilently: function runSilently(func, self) {
         this.withSavedValues(["silent"], function () {
@@ -618,7 +626,7 @@ var CommandLine = Module("commandline", {
 
             node.completionList = ItemList(elem);
             node.completionList.isAboveMow = node.id ==
-                this.widgets.statusbar.commandline.id
+                this.widgets.statusbar.commandline.id;
         }
         return node.completionList;
     },
@@ -651,6 +659,7 @@ var CommandLine = Module("commandline", {
         if (!scroll || Date.now() - this._lastEchoTime > 5000)
             this.clearMessage();
         this._lastEchoTime = 0;
+        this.hiddenMessages = 0;
 
         if (!this.commandSession) {
             this.widgets.command = null;
@@ -665,15 +674,17 @@ var CommandLine = Module("commandline", {
     },
 
     clearMessage: function clearMessage() {
-        if (this.widgets.message && this.widgets.message[1] === this._lastClearable)
+        if (this.widgets.message && this.widgets.message[1] === this._lastClearable) {
             this.widgets.message = null;
+            this.hiddenMessages = 0;
+        }
     },
 
     /**
      * Displays the multi-line output of a command, preceded by the last
      * executed ex command string.
      *
-     * @param {XML} xml The output as an E4X XML object.
+     * @param {object} xml The output as a JSON XML object.
      */
     commandOutput: function commandOutput(xml) {
         if (!this.command)
@@ -715,6 +726,16 @@ var CommandLine = Module("commandline", {
         }
     },
 
+    _hiddenMessages: 0,
+    get hiddenMessages() this._hiddenMessages,
+    set hiddenMessages(val) {
+        this._hiddenMessages = val;
+        if (val)
+            this.widgets["message-pre"] = _("commandline.moreMessages", val) + " ";
+        else
+            this.widgets["message-pre"] = null;
+    },
+
     _lastEcho: null,
 
     /**
@@ -748,14 +769,17 @@ var CommandLine = Module("commandline", {
 
         highlightGroup = highlightGroup || this.HL_NORMAL;
 
-        if (flags & this.APPEND_TO_MESSAGES) {
+        let appendToMessages = (data) => {
             let message = isObject(data) && !DOM.isJSONXML(data) ? data : { message: data };
 
             // Make sure the memoized message property is an instance property.
             message.message;
             this._messageHistory.add(update({ highlight: highlightGroup }, message));
-            data = message.message;
+            return message.message;
         }
+
+        if (flags & this.APPEND_TO_MESSAGES)
+            data = appendToMessages(data);
 
         if ((flags & this.ACTIVE_WINDOW) && window != overlay.activeWindow)
             return;
@@ -763,32 +787,56 @@ var CommandLine = Module("commandline", {
         if ((flags & this.DISALLOW_MULTILINE) && !this.widgets.mowContainer.collapsed)
             return;
 
-        let single = flags & (this.FORCE_SINGLELINE | this.DISALLOW_MULTILINE);
+        let forceSingle = flags & (this.FORCE_SINGLELINE | this.DISALLOW_MULTILINE);
         let action = this._echoLine;
 
         if ((flags & this.FORCE_MULTILINE) || (/\n/.test(data) || !isinstance(data, [_, "String"])) && !(flags & this.FORCE_SINGLELINE))
-            action = mow.closure.echo;
+            action = mow.bound.echo;
 
-        if (single)
+        let checkSingleLine = () => action == this._echoLine;
+
+        if (forceSingle) {
             this._lastEcho = null;
+            this.hiddenMessages = 0;
+        }
         else {
-            if (this.widgets.message && this.widgets.message[1] == this._lastEcho)
-                mow.echo(["span", { highlight: "Message" }, this._lastEcho],
-                         this.widgets.message[0], true);
-
-            if (action === this._echoLine && !(flags & this.FORCE_MULTILINE)
-                && !(dactyl.fullyInitialized && this.widgets.mowContainer.collapsed)) {
+            // So complicated...
+            if (checkSingleLine() && !this.widgets.mowContainer.collapsed) {
                 highlightGroup += " Message";
-                action = mow.closure.echo;
+                action = mow.bound.echo;
             }
-            this._lastEcho = (action == this._echoLine) && data;
+            else if (!checkSingleLine() && this.widgets.mowContainer.collapsed) {
+                if (this._lastEcho && this.widgets.message && this.widgets.message[1] == this._lastEcho.msg) {
+                    if (!(this._lastEcho.flags & this.APPEND_TO_MESSAGES))
+                        appendToMessages(this._lastEcho.data);
+
+                    mow.echo(
+                        ["span", { highlight: "Message" },
+                            ["span", { highlight: "WarningMsg" },
+                                _("commandline.moreMessages", this.hiddenMessages + 1) + " "],
+                            this._lastEcho.msg],
+                        this.widgets.message[0], true);
+
+                    this.hiddenMessages = 0;
+                }
+            }
+            else if (this._lastEcho && this.widgets.message && this.widgets.message[1] == this._lastEcho.msg) {
+                if (!(this._lastEcho.flags & this.APPEND_TO_MESSAGES))
+                    appendToMessages(this._lastEcho.data);
+                if (checkSingleLine() && !(flags & this.APPEND_TO_MESSAGES))
+                    appendToMessages(data);
+
+                flags |= this.APPEND_TO_MESSAGES;
+                this.hiddenMessages++;
+            }
+            this._lastEcho = checkSingleLine() && { flags: flags, msg: data, data: arguments[0] };
         }
 
         this._lastClearable = action === this._echoLine && String(data);
         this._lastEchoTime = (flags & this.FORCE_SINGLELINE) && Date.now();
 
         if (action)
-            action.call(this, data, highlightGroup, single);
+            action.call(this, data, highlightGroup, checkSingleLine());
     },
     _lastEchoTime: 0,
 
@@ -797,7 +845,6 @@ var CommandLine = Module("commandline", {
      * pop at any time to close the prompt.
      *
      * @param {string} prompt The input prompt to use.
-     * @param {function(string)} callback
      * @param {Object} extra
      * @... {function} onChange - A function to be called with the current
      *     input every time it changes.
@@ -808,17 +855,16 @@ var CommandLine = Module("commandline", {
      * @... {string} default - The initial value that will be returned
      *     if the user presses <CR> straightaway. @default ""
      */
-    input: function _input(prompt, callback, extra) {
-        extra = extra || {};
+    input: promises.withCallbacks(function _input([callback, reject], prompt, extra={}, thing={}) {
+        if (callable(extra))
+            // Deprecated.
+            [callback, extra] = [extra, thing];
 
-        CommandPromptMode(prompt, update({ onSubmit: callback }, extra)).open();
-    },
+        CommandPromptMode(prompt, update({ onSubmit: callback, onCancel: reject }, extra)).open();
+    }),
 
     readHeredoc: function readHeredoc(end) {
-        let args;
-        commandline.inputMultiline(end, function (res) { args = res; });
-        util.waitFor(function () args !== undefined);
-        return args;
+        return util.waitFor(commandline.inputMultiline(end));
     },
 
     /**
@@ -827,10 +873,10 @@ var CommandLine = Module("commandline", {
      * callback with that string as a parameter.
      *
      * @param {string} end
-     * @param {function(string)} callback
+     * @returns {Promise<string>}
      */
     // FIXME: Buggy, especially when pasting.
-    inputMultiline: function inputMultiline(end, callback) {
+    inputMultiline: promises.withCallbacks(function inputMultiline([callback], end) {
         let cmd = this.command;
         let self = {
             end: "\n" + end + "\n",
@@ -856,13 +902,13 @@ var CommandLine = Module("commandline", {
         this._autosizeMultilineInputWidget();
 
         this.timeout(function () { dactyl.focus(this.widgets.multilineInput); }, 10);
-    },
+    }),
 
     get commandMode() this.commandSession && isinstance(modes.main, modes.COMMAND_LINE),
 
     events: update(
         iter(CommandMode.prototype.events).map(
-            function ([event, handler]) [
+            ([event, handler]) => [
                 event, function (event) {
                     if (this.commandMode)
                         handler.call(this.commandSession, event);
@@ -901,7 +947,7 @@ var CommandLine = Module("commandline", {
 
     updateOutputHeight: deprecated("mow.resize", function updateOutputHeight(open, extra) mow.resize(open, extra)),
 
-    withOutputToString: function withOutputToString(fn, self) {
+    withOutputToString: function withOutputToString(fn, self, ...args) {
         dactyl.registerObserver("echoLine", observe, true);
         dactyl.registerObserver("echoMultiline", observe, true);
 
@@ -911,9 +957,9 @@ var CommandLine = Module("commandline", {
         }
 
         this.savingOutput = true;
-        dactyl.trapErrors.apply(dactyl, [fn, self].concat(Array.slice(arguments, 2)));
+        dactyl.trapErrors.apply(dactyl, [fn, self].concat(args));
         this.savingOutput = false;
-        return output.map(function (elem) elem instanceof Node ? DOM.stringify(elem) : elem)
+        return output.map(elem => elem instanceof Node ? DOM.stringify(elem) : elem)
                      .join("\n");
     }
 }, {
@@ -945,14 +991,19 @@ var CommandLine = Module("commandline", {
         save: function save() {
             if (events.feedingKeys)
                 return;
+
             let str = this.input.value;
             if (/^\s*$/.test(str))
                 return;
-            this.store = this.store.filter(function (line) (line.value || line) != str);
-            dactyl.trapErrors(function () {
-                this.store.push({ value: str, timestamp: Date.now()*1000, privateData: this.checkPrivate(str) });
-            }, this);
-            this.store = this.store.slice(Math.max(0, this.store.length - options["history"]));
+
+            let privateData = this.checkPrivate(str);
+            if (privateData == "never-save")
+                return;
+
+            let store = Array.filter(this.store, line => (line.value || line) != str);
+            dactyl.trapErrors(
+                () => store.push({ value: str, timestamp: Date.now() * 1000, privateData: privateData }));
+            this.store = store.slice(Math.max(0, store.length - options["history"]));
         },
         /**
          * @property {function} Returns whether a data item should be
@@ -1062,7 +1113,7 @@ var CommandLine = Module("commandline", {
             this.itemList = commandline.completionList;
             this.itemList.open(this.context);
 
-            dactyl.registerObserver("events.doneFeeding", this.closure.onDoneFeeding, true);
+            dactyl.registerObserver("events.doneFeeding", this.bound.onDoneFeeding, true);
 
             this.autocompleteTimer = Timer(200, 500, function autocompleteTell(tabPressed) {
                 if (events.feedingKeys && !tabPressed)
@@ -1102,7 +1153,7 @@ var CommandLine = Module("commandline", {
         },
 
         get activeContexts() this.context.contextList
-                                 .filter(function (c) c.items.length || c.incomplete),
+                                 .filter(c => c.items.length || c.incomplete),
 
         /**
          * Returns the current completion string relative to the
@@ -1195,7 +1246,7 @@ var CommandLine = Module("commandline", {
          * called.
          */
         cleanup: function cleanup() {
-            dactyl.unregisterObserver("events.doneFeeding", this.closure.onDoneFeeding);
+            dactyl.unregisterObserver("events.doneFeeding", this.bound.onDoneFeeding);
             this.previewClear();
 
             this.tabTimer.reset();
@@ -1332,10 +1383,8 @@ var CommandLine = Module("commandline", {
          *      @default {@link #selected}
          * @returns {object}
          */
-        getItem: function getItem(tuple) {
-            tuple = tuple || this.selected;
-            return tuple && tuple[0] && tuple[0].items[tuple[1]];
-        },
+        getItem: function getItem(tuple=this.selected)
+            tuple && tuple[0] && tuple[0].items[tuple[1]],
 
         /**
          * Returns a tuple representing the next item, at the given
@@ -1432,6 +1481,9 @@ var CommandLine = Module("commandline", {
                 if (cmd.substr(cmd.length - str.length) == str)
                     commandline.widgets.active.command.value = cmd.substr(0, cmd.length - str.length);
             }
+            let e = this.editor.selection.focusNode;
+            if (e != this.editor.rootElement && e.parentNode != this.editor.rootElement)
+                this.editor.selection.getRangeAt(0).selectNodeContents(this.editor.rootElement);
             delete this.removeSubstring;
         },
 
@@ -1446,11 +1498,10 @@ var CommandLine = Module("commandline", {
          *      @default 1
          * @param {boolean} fromTab If true, this function was
          *      called by {@link #tab}.
+         *      @default false
          *      @private
          */
-        select: function select(idx, count, fromTab) {
-            count = count || 1;
-
+        select: function select(idx, count=1, fromTab=false) {
             switch (idx) {
             case this.UP:
             case this.DOWN:
@@ -1633,7 +1684,7 @@ var CommandLine = Module("commandline", {
                 }
                 else if (commandline._messageHistory.length > 1) {
                     commandline.commandOutput(
-                        template.map(commandline._messageHistory.messages, function (message)
+                        template.map(commandline._messageHistory.messages, message =>
                            ["div", { highlight: message.highlight + " Message" },
                                message.message]));
                 }
@@ -1648,7 +1699,7 @@ var CommandLine = Module("commandline", {
         commands.add(["sil[ent]"],
             "Run a command silently",
             function (args) {
-                commandline.runSilently(function () commands.execute(args[0] || "", null, true));
+                commandline.runSilently(() => { commands.execute(args[0] || "", null, true); });
             }, {
                 completer: function (context) completion.ex(context),
                 literal: 0,
@@ -1699,13 +1750,12 @@ var CommandLine = Module("commandline", {
                     text = text.substring(1, index);
                     modes.pop();
 
-                    return function () self.callback.call(commandline, text);
+                    return () => self.callback.call(commandline, text);
                 }
                 return Events.PASS;
             });
 
-        let bind = function bind()
-            mappings.add.apply(mappings, [[modes.COMMAND_LINE]].concat(Array.slice(arguments)))
+        let bind = function bind(...args) mappings.add.apply(mappings, [[modes.COMMAND_LINE]].concat(args));
 
         bind(["<Esc>", "<C-[>"], "Stop waiting for completions or exit Command Line mode",
              function ({ self }) {
@@ -1834,10 +1884,10 @@ var CommandLine = Module("commandline", {
                 let store = commandline._store;
                 for (let [k, v] in store) {
                     if (k == "command")
-                        store.set(k, v.filter(function (item)
+                        store.set(k, v.filter(item =>
                             !(timespan.contains(item.timestamp) && (!host || commands.hasDomain(item.value, host)))));
                     else if (!host)
-                        store.set(k, v.filter(function (item) !timespan.contains(item.timestamp)));
+                        store.set(k, v.filter(item => !timespan.contains(item.timestamp)));
                 }
             }
         });
@@ -1845,20 +1895,24 @@ var CommandLine = Module("commandline", {
         sanitizer.addItem("history", {
             action: function (timespan, host) {
                 commandline._store.set("command",
-                    commandline._store.get("command", []).filter(function (item)
+                    commandline._store.get("command", []).filter(item =>
                         !(timespan.contains(item.timestamp) && (host ? commands.hasDomain(item.value, host)
                                                                      : item.privateData))));
 
-                commandline._messageHistory.filter(function (item) !timespan.contains(item.timestamp * 1000) ||
-                    !item.domains && !item.privateData ||
-                    host && (!item.domains || !item.domains.some(function (d) util.isSubdomain(d, host))));
+                commandline._messageHistory.filter(item =>
+                    ( !timespan.contains(item.timestamp * 1000)
+                   || !item.domains && !item.privateData
+                   || host && ( !item.domains
+                             || !item.domains.some(d => util.isSubdomain(d, host)))));
             }
         });
         sanitizer.addItem("messages", {
             description: "Saved :messages",
             action: function (timespan, host) {
-                commandline._messageHistory.filter(function (item) !timespan.contains(item.timestamp * 1000) ||
-                    host && (!item.domains || !item.domains.some(function (d) util.isSubdomain(d, host))));
+                commandline._messageHistory.filter(item =>
+                    ( !timespan.contains(item.timestamp * 1000)
+                   || host && ( !item.domains
+                             || !item.domains.some(d => util.isSubdomain(d, host)))));
             }
         });
     }
@@ -1894,7 +1948,7 @@ var ItemList = Class("ItemList", {
                 this.resize(flags);
         }, this);
 
-        DOM(this.win).resize(this._onResize.closure.tell);
+        DOM(this.win).resize(this._onResize.bound.tell);
     },
 
     get rootXML()
@@ -1906,18 +1960,18 @@ var ItemList = Class("ItemList", {
                 ["div", { key: "completions" }]],
 
             ["div", { highlight: "Completions" },
-                template.map(util.range(0, options["maxitems"] * 2), function (i)
+                template.map(util.range(0, options["maxitems"] * 2), i =>
                     ["div", { highlight: "CompItem NonText" },
                         "~"])]],
 
     get itemCount() this.context.contextList
-                        .reduce(function (acc, ctxt) acc + ctxt.items.length, 0),
+                        .reduce((acc, ctxt) => acc + ctxt.items.length, 0),
 
     get visible() !this.container.collapsed,
     set visible(val) this.container.collapsed = !val,
 
     get activeGroups() this.context.contextList
-                           .filter(function (c) c.items.length || c.message || c.incomplete)
+                           .filter(c => c.items.length || c.message || c.incomplete)
                            .map(this.getGroup, this),
 
     get selected() let (g = this.selectedGroup) g && g.selectedIdx != null
@@ -1967,7 +2021,7 @@ var ItemList = Class("ItemList", {
         if (start < 0 || start >= this.itemCount)
             return null;
 
-        group = array.nth(groups, function (g) let (i = start - g.offsets.start) i >= 0 && i < g.itemCount, 0)
+        group = groups.find(g => let (i = start - g.offsets.start) i >= 0 && i < g.itemCount);
         return [group.context, start - group.offsets.start];
     },
 
@@ -2084,9 +2138,10 @@ var ItemList = Class("ItemList", {
 
         // We need to collect all of the rescrolling functions in
         // one go, as the height calculation that they need to do
-        // would force a reflow after each DOM modification.
-        this.activeGroups.filter(function (g) !g.collapsed)
-            .map(function (g) g.rescrollFunc)
+        // would force an expensive reflow after each call due to
+        // DOM modifications, otherwise.
+        this.activeGroups.filter(g => !g.collapsed)
+            .map(g => g.rescrollFunc)
             .forEach(call);
 
         if (!this.selected)
@@ -2218,7 +2273,7 @@ var ItemList = Class("ItemList", {
     getGroup: function getGroup(context)
         context instanceof ItemList.Group ? context
                                           : context && context.getCache("itemlist-group",
-                                                                        bind("Group", ItemList, this, context)),
+                                                                        () => ItemList.Group(this, context)),
 
     getOffset: function getOffset(tuple) tuple && this.getGroup(tuple[0]).getOffset(tuple[1])
 }, {
@@ -2279,7 +2334,7 @@ var ItemList = Class("ItemList", {
                 container.scrollTop = scroll;
                 if (scrollY != null)
                     win.scrollTo(0, Math.max(scrollY, 0));
-            }
+            };
         },
 
         /**
@@ -2345,8 +2400,8 @@ var ItemList = Class("ItemList", {
                         first = row;
 
                 let container = DOM(this.nodes.items);
-                let before    = first ? DOM(first).closure.before
-                                      : DOM(this.nodes.items).closure.append;
+                let before    = first ? DOM(first).bound.before
+                                      : DOM(this.nodes.items).bound.append;
 
                 for (let [i, row] in this.context.getRows(range.start, range.end,
                                                           this.doc)) {
@@ -2392,4 +2447,4 @@ var ItemList = Class("ItemList", {
     })
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

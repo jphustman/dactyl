@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -54,9 +54,9 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         delete window.liberator;
 
         // Prevents box ordering bugs after our stylesheet is removed.
-        styles.system.add("cleanup-sheet", config.styleableChrome, literal(/*
+        styles.system.add("cleanup-sheet", config.styleableChrome, literal(function () /*
             #TabsToolbar tab { display: none; }
-        */));
+        */$));
         styles.unregisterSheet("resource://dactyl-skin/dactyl.css");
         DOM('#TabsToolbar tab', document).style.display;
     },
@@ -82,7 +82,6 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
             });
         }
     },
-
 
     observers: {
         "dactyl-cleanup": function dactyl_cleanup(subject, reason) {
@@ -137,14 +136,14 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     && !item.hidden
                     && !/rdf:http:/.test(item.getAttribute("label"))) { // FIXME
                     item.dactylPath = parent + item.getAttribute("label");
-                    if (!targetPath || targetPath.indexOf(item.dactylPath) == 0)
+                    if (!targetPath || targetPath.startsWith(item.dactylPath))
                         items.push(item);
                 }
                 else {
                     let path = parent;
                     if (item.localName == "menu")
                         path += item.getAttribute("label") + ".";
-                    if (!targetPath || targetPath.indexOf(path) == 0)
+                    if (!targetPath || targetPath.startsWith(path))
                         addChildren(item, path);
                 }
             }
@@ -164,6 +163,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
     NEW_WINDOW: "window",
 
     forceBackground: null,
+    forcePrivate: null,
     forceTarget: null,
 
     get forceOpen() ({ background: this.forceBackground,
@@ -206,37 +206,28 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
 
     registerObservers: function registerObservers(obj, prop) {
         for (let [signal, func] in Iterator(obj[prop || "signals"]))
-            this.registerObserver(signal, obj.closure(func), false);
+            this.registerObserver(signal, func.bind(obj), false);
     },
 
     unregisterObserver: function unregisterObserver(type, callback) {
         if (type in this._observers)
-            this._observers[type] = this._observers[type].filter(function (c) c.get() != callback);
+            this._observers[type] = this._observers[type].filter(c => c.get() != callback);
     },
 
     applyTriggerObserver: function triggerObserver(type, args) {
         if (type in this._observers)
-            this._observers[type] = this._observers[type].filter(function (callback) {
-                if (callback.get()) {
-                    try {
-                        try {
-                            callback.get().apply(null, args);
-                        }
-                        catch (e if e.message == "can't wrap XML objects") {
-                            // Horrible kludge.
-                            callback.get().apply(null, [String(args[0])].concat(args.slice(1)));
-                        }
-                    }
-                    catch (e) {
-                        dactyl.reportError(e);
-                    }
+            this._observers[type] = this._observers[type]
+                                        .filter(callback => {
+                callback = callback.get();
+                if (callback) {
+                    util.trapErrors(() => callback.apply(null, args));
                     return true;
                 }
             });
     },
 
-    triggerObserver: function triggerObserver(type) {
-        return this.applyTriggerObserver(type, Array.slice(arguments, 1));
+    triggerObserver: function triggerObserver(type, ...args) {
+        return this.applyTriggerObserver(type, args);
     },
 
     addUsageCommand: function (params) {
@@ -245,12 +236,12 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         let name = commands.add(params.name, params.description,
             function (args) {
                 let results = array(params.iterate(args))
-                    .sort(function (a, b) String.localeCompare(a.name, b.name));
+                    .sort((a, b) => String.localeCompare(a.name, b.name));
 
-                let filters = args.map(function (arg) let (re = util.regexp.escape(arg))
+                let filters = args.map(arg => let (re = util.regexp.escape(arg))
                                         util.regexp("\\b" + re + "\\b|(?:^|[()\\s])" + re + "(?:$|[()\\s])", "i"));
                 if (filters.length)
-                    results = results.filter(function (item) filters.every(function (re) keys(item).some(re.closure.test)));
+                    results = results.filter(item => filters.every(re => keys(item).some(re.bound.test)));
 
                 commandline.commandOutput(
                     template.usage(results, params.format));
@@ -276,12 +267,11 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         if (params.index)
             this.indices[params.index] = function () {
                 let results = array((params.iterateIndex || params.iterate).call(params, commands.get(name).newArgs()))
-                        .array.sort(function (a, b) String.localeCompare(a.name, b.name));
+                        .array.sort((a, b) => String.localeCompare(a.name, b.name));
 
-                let haveTag = Set.has(help.tags);
                 for (let obj in values(results)) {
                     let res = dactyl.generateHelp(obj, null, null, true);
-                    if (!haveTag(obj.helpTag))
+                    if (!hasOwnProperty(help.tags, obj.helpTag))
                         res[0][1].tag = obj.helpTag;
 
                     yield res;
@@ -387,9 +377,9 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
     },
 
     dump: deprecated("util.dump",
-                     { get: function dump() util.closure.dump }),
+                     { get: function dump() util.bound.dump }),
     dumpStack: deprecated("util.dumpStack",
-                          { get: function dumpStack() util.closure.dumpStack }),
+                          { get: function dumpStack() util.bound.dumpStack }),
 
     /**
      * Outputs a plain message to the command line.
@@ -468,16 +458,16 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
      *     should be loaded.
      */
     loadScript: function loadScript(uri, context) {
+        let prefix = "literal:" + uri + ":";
+        cache.flush(s => s.startsWith(prefix));
+        delete literal.files[uri];
         JSMLoader.loadSubScript(uri, context, File.defaultEncoding);
     },
 
     userEval: function userEval(str, context, fileName, lineNumber) {
-        let ctxt;
-        if (jsmodules.__proto__ != window && jsmodules.__proto__ != XPCNativeWrapper(window) &&
-                jsmodules.isPrototypeOf(context))
-            str = "with (window) { with (modules) { (this.eval || eval)(" + str.quote() + ") } }";
+        let ctxt,
+            info = contexts.context;
 
-        let info = contexts.context;
         if (fileName == null)
             if (info)
                 ({ file: fileName, line: lineNumber, context: ctxt }) = info;
@@ -485,13 +475,13 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         if (fileName && fileName[0] == "[")
             fileName = "dactyl://command-line/";
         else if (!context)
-            context = ctxt || _userContext;
-
-        if (isinstance(context, ["Sandbox"]))
-            return Cu.evalInSandbox(str, context, "1.8", fileName, lineNumber);
+            context = ctxt || userContext;
 
         if (!context)
             context = userContext || ctxt;
+
+        if (isinstance(context, ["Sandbox"]))
+            return Cu.evalInSandbox(str, context, "1.8", fileName, lineNumber);
 
         if (services.has("dactyl") && services.dactyl.evalInContext)
             return services.dactyl.evalInContext(str, context, fileName, lineNumber);
@@ -523,10 +513,10 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
      * Acts like the Function builtin, but the code executes in the
      * userContext global.
      */
-    userFunc: function userFunc() {
+    userFunc: function userFunc(...args) {
         return this.userEval(
-            "(function userFunction(" + Array.slice(arguments, 0, -1).join(", ") + ")" +
-            " { " + arguments[arguments.length - 1] + " })");
+            "(function userFunction(" + args.slice(0, -1).join(", ") + ")" +
+            " { " + args.pop() + " })");
     },
 
     /**
@@ -538,12 +528,10 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
      * @param {boolean} silent Whether the command should be echoed on the
      *     command line.
      */
-    execute: function execute(str, modifiers, silent) {
+    execute: function execute(str, modifiers={}, silent=false) {
         // skip comments and blank lines
         if (/^\s*("|$)/.test(str))
             return;
-
-        modifiers = modifiers || {};
 
         if (!silent)
             commands.lastCommand = str.replace(/^\s*:\s*/, "");
@@ -599,7 +587,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     if (win.frameElement)
                         win.frameElement.blur();
                     // Grr.
-                    if (content.document.activeElement instanceof HTMLIFrameElement)
+                    if (content.document.activeElement instanceof Ci.nsIDOMHTMLIFrameElement)
                         content.document.activeElement.blur();
                 });
             }
@@ -622,7 +610,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
      * @param {string} feature The feature name.
      * @returns {boolean}
      */
-    has: function has(feature) Set.has(config.features, feature),
+    has: function has(feature) config.has(feature),
 
     /**
      * @private
@@ -639,8 +627,8 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         }
     },
 
-    help: deprecated("help.help", { get: function help() modules.help.closure.help }),
-    findHelp: deprecated("help.findHelp", { get: function findHelp() help.closure.findHelp }),
+    help: deprecated("help.help", { get: function help() modules.help.bound.help }),
+    findHelp: deprecated("help.findHelp", { get: function findHelp() help.bound.findHelp }),
 
     /**
      * @private
@@ -667,22 +655,23 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         let args = null;
 
         if (obj instanceof Command) {
-            link = function (cmd) ["ex", {}, cmd];
+            link = cmd => ["ex", {}, cmd];
             args = obj.parseArgs("", CompletionContext(str || ""));
-            tag  = function (cmd) DOM.DOMString(":" + cmd);
-            spec = function (cmd) [
+            tag  = cmd => DOM.DOMString(":" + cmd);
+            spec = cmd => [
                 obj.count ? ["oa", {}, "count"] : [],
                 cmd,
                 obj.bang ? ["oa", {}, "!"] : []
             ];
         }
         else if (obj instanceof Map) {
-            spec = function (map) obj.count ? [["oa", {}, "count"], map] : DOM.DOMString(map);
-            tag = function (map) [
+            spec = map => (obj.count ? [["oa", {}, "count"], map]
+                                     : DOM.DOMString(map));
+            tag = map => [
                 let (c = obj.modes[0].char) c ? c + "_" : "",
                 map
-            ]
-            link = function (map) {
+            ];
+            link = map => {
                 let [, mode, name, extra] = /^(?:(.)_)?(?:<([^>]+)>)?(.*)$/.exec(map);
                 let k = ["k", {}, extra];
                 if (name)
@@ -693,9 +682,9 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
             };
         }
         else if (obj instanceof Option) {
-            spec = function () template.map(obj.names, tag, " ");
-            tag = function (name) DOM.DOMString("'" + name + "'");
-            link = function (opt, name) ["o", {}, name];
+            spec = () => template.map(obj.names, tag, " ");
+            tag = name => DOM.DOMString("'" + name + "'");
+            link = (opt, name) => ["o", {}, name];
             args = { value: "", values: [] };
         }
 
@@ -709,7 +698,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         let description = ["description", {},
             obj.description ? ["p", {}, template.linkifyHelp(obj.description.replace(/\.?$/, "."), true)] : "",
             extraHelp ? extraHelp : "",
-            !(extraHelp || obj.description) ? ["p", {}, /*L*/ "Sorry, no help available."] : ""]
+            !(extraHelp || obj.description) ? ["p", {}, /*L*/ "Sorry, no help available."] : ""];
 
         res.push(
             ["item", {},
@@ -720,7 +709,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     let (name = (obj.specs || obj.names)[0])
                           spec(template.highlightRegexp(tag(name),
                                /\[(.*?)\]/g,
-                               function (m, n0) ["oa", {}, n0]),
+                               (m, n0) => ["oa", {}, n0]),
                                name)],
                 !obj.type ? "" : [
                     ["type", {}, obj.type],
@@ -735,17 +724,19 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         }
 
         if (obj.completer && false)
-            add(completion._runCompleter(obj.closure.completer, "", null, args).items
-                          .map(function (i) [i.text, i.description]));
+            add(completion._runCompleter(obj.bound.completer, "", null, args).items
+                          .map(i => [i.text, i.description]));
 
-        if (obj.options && obj.options.some(function (o) o.description) && false)
-            add(obj.options.filter(function (o) o.description)
-                   .map(function (o) [
+        if (obj.options && obj.options.some(o => o.description) && false)
+            add(obj.options.filter(o => o.description)
+                   .map(o => [
                         o.names[0],
                         [o.description,
                          o.names.length == 1 ? "" :
                              ["", " (short name: ",
-                                 template.map(o.names.slice(1), function (n) ["em", {}, n], ", "),
+                                 template.map(o.names.slice(1),
+                                              n => ["em", {}, n],
+                                              ", "),
                               ")"]]
                     ]));
 
@@ -831,6 +822,20 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
     },
 
     events: {
+        beforecustomization: function onbeforecustomization(event) {
+            // Show navigation bar on Australis, where it's not supposed
+            // to be collapsible, and is therefore not handled by
+            // builtin code.
+            if ("CustomizableUI" in window)
+                this.setNodeVisible(document.getElementById("nav-bar"),
+                                    true);
+        },
+
+        aftercustomization: function onaftercustomization(event) {
+            // Restore toolbar states.
+            options["guioptions"] = options["guioptions"];
+        },
+
         click: function onClick(event) {
             let elem = event.originalTarget;
 
@@ -889,18 +894,17 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
      *     tabs.
      * @returns {boolean}
      */
-    open: function open(urls, params, force) {
+    open: function open(urls, params={}, force=false) {
         if (typeof urls == "string")
             urls = dactyl.parseURLs(urls);
 
         if (urls.length > prefs.get("browser.tabs.maxOpenBeforeWarn", 20) && !force)
-            return commandline.input(_("dactyl.prompt.openMany", urls.length) + " ",
-                function (resp) {
+            return commandline.input(_("dactyl.prompt.openMany", urls.length) + " ")
+                .then(function (resp) {
                     if (resp && resp.match(/^y(es)?$/i))
                         dactyl.open(urls, params, true);
                 });
 
-        params = params || {};
         if (isString(params))
             params = { where: params };
 
@@ -955,8 +959,12 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     });
 
                 case dactyl.NEW_WINDOW:
-                    let win = window.openDialog(document.documentURI, "_blank", "chrome,all,dialog=no");
-                    util.waitFor(function () win.document.readyState === "complete");
+                    let options = ["chrome", "all", "dialog=no"];
+                    if (dactyl.forcePrivate)
+                        options.push("private");
+
+                    let win = window.openDialog(document.documentURI, "_blank", options.join(","));
+                    util.waitFor(() => win.document.readyState === "complete");
                     browser = win.dactyl && win.dactyl.modules.config.tabbrowser || win.getBrowser();
                     // FALLTHROUGH
                 case dactyl.CURRENT_TAB:
@@ -1033,15 +1041,15 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         }, this);
     },
     stringToURLArray: deprecated("dactyl.parseURLs", "parseURLs"),
-    urlish: Class.Memoize(function () util.regexp(literal(/*
+    urlish: Class.Memoize(() => util.regexp(literal(function () /*
             ^ (
                 <domain>+ (:\d+)? (/ .*) |
                 <domain>+ (:\d+) |
                 <domain>+ \. [a-z0-9]+ |
                 localhost
             ) $
-        */), "ix", {
-        domain: util.regexp(String.replace(literal(/*
+        */$), "ix", {
+        domain: util.regexp(String.replace(literal(function () /*
             [^
                 U0000-U002c // U002d-U002e --.
                 U002f       // /
@@ -1050,7 +1058,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 U005b-U0060 // U0061-U007a A-Z
                 U007b-U007f
             ]
-        */), /U/g, "\\u"), "x")
+        */$), /U/g, "\\u"), "x")
     })),
 
     pluginFiles: {},
@@ -1112,11 +1120,11 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
      * @param {function} func The function to call
      * @param {object} self The 'this' object for the function.
      */
-    trapErrors: function trapErrors(func, self) {
+    trapErrors: function trapErrors(func, self, ...args) {
         try {
             if (isString(func))
                 func = self[func];
-            return func.apply(self || this, Array.slice(arguments, 2));
+            return func.apply(self || this, args);
         }
         catch (e) {
             try {
@@ -1139,7 +1147,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         if (error instanceof FailedAssertion && error.noTrace || error.message === "Interrupted") {
             let context = contexts.context;
             let prefix = context ? context.file + ":" + context.line + ": " : "";
-            if (error.message && error.message.indexOf(prefix) !== 0 &&
+            if (error.message && !error.message.startsWith(prefix) &&
                     prefix != "[Command Line]:1: ")
                 error.message = prefix + error.message;
 
@@ -1180,14 +1188,13 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
             return [];
         }
     },
-    wrapCallback: function wrapCallback(callback, self) {
-        self = self || this;
+    wrapCallback: function wrapCallback(callback, self=this) {
         let save = ["forceOpen"];
-        let saved = save.map(function (p) dactyl[p]);
+        let saved = save.map(p => dactyl[p]);
         return function wrappedCallback() {
             let args = arguments;
             return dactyl.withSavedValues(save, function () {
-                saved.forEach(function (p, i) dactyl[save[i]] = p);
+                saved.forEach((p, i) => { dactyl[save[i]] = p; });
                 try {
                     return callback.apply(self, args);
                 }
@@ -1195,17 +1202,18 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     dactyl.reportError(e, true);
                 }
             });
-        }
+        };
     },
 
     /**
      * @property {[Window]} Returns an array of all the host application's
      *     open windows.
      */
-    get windows() [win for (win in iter(services.windowMediator.getEnumerator("navigator:browser"))) if (win.dactyl)],
+    get windows() [w for (w of overlay.windows)]
 
 }, {
-    toolbarHidden: function hidden(elem) (elem.getAttribute("autohide") || elem.getAttribute("collapsed")) == "true"
+    toolbarHidden: function toolbarHidden(elem) "true" == (elem.getAttribute("autohide") ||
+                                                           elem.getAttribute("collapsed"))
 }, {
     cache: function initCache() {
         cache.register("help/plugins.xml", function () {
@@ -1216,18 +1224,23 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 try {
                     let info = contexts.getDocs(context);
                     if (DOM.isJSONXML(info)) {
-                        let langs = info.slice(2).filter(function (e) isArray(e) && isObject(e[1]) && e[1].lang);
+                        let langs = info.slice(2)
+                                        .filter(e => isArray(e) && isObject(e[1]) && e[1].lang);
                         if (langs) {
-                            let lang = config.bestLocale(l[1].lang for each (l in langs));
+                            let lang = config.bestLocale(langs.map(l => l[1].lang));
 
                             info = info.slice(0, 2).concat(
-                                info.slice(2).filter(function (e) !isArray(e) || !isObject(e[1])
-                                                               || e[1].lang == lang));
+                                info.slice(2).filter(e => !isArray(e)
+                                                       || !isObject(e[1])
+                                                       || e[1].lang == lang));
 
-                            for each (let elem in info.slice(2).filter(function (e) isArray(e) && e[0] == "info" && isObject(e[1])))
-                                for (let attr in values(["name", "summary", "href"]))
+                            info.slice(2)
+                                .filter(e => isArray(e) && e[0] == "info" && isObject(e[1]))
+                                .forEach(elem => {
+                                for (let attr of ["name", "summary", "href"])
                                     if (attr in elem[1])
                                         info[attr] = elem[1][attr];
+                            });
                         }
                         body.push(["h2", { xmlns: "dactyl", tag: info[1].name + '-plugin' },
                                        String(info[1].summary)]);
@@ -1247,41 +1260,41 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                            ["toc", { start: "2" }],
 
                            body]);
-        });
+        }, true);
 
         cache.register("help/index.xml", function () {
             return '<?xml version="1.0"?>\n' +
                    DOM.toXML(["overlay", { xmlns: "dactyl" },
-                       template.map(dactyl.indices, function ([name, iter])
+                       template.map(dactyl.indices, ([name, iter]) =>
                            ["dl", { insertafter: name + "-index" },
                                template.map(iter(), util.identity)],
                            "\n\n")]);
-        });
+        }, true);
 
         cache.register("help/gui.xml", function () {
             return '<?xml version="1.0"?>\n' +
                    DOM.toXML(["overlay", { xmlns: "dactyl" },
                        ["dl", { insertafter: "dialog-list" },
-                           template.map(config.dialogs, function ([name, val])
+                           template.map(config.dialogs, ([name, val]) =>
                                (!val[2] || val[2]())
                                    ? [["dt", {}, name],
                                       ["dd", {}, val[0]]]
                                    : undefined,
                                "\n")]]);
-        });
+        }, true);
 
         cache.register("help/privacy.xml", function () {
             return '<?xml version="1.0"?>\n' +
                    DOM.toXML(["overlay", { xmlns: "dactyl" },
                        ["dl", { insertafter: "sanitize-items" },
                            template.map(options.get("sanitizeitems").values
-                                                .sort(function (a, b) String.localeCompare(a.name,
-                                                                                           b.name)),
-                               function ({ name, description })
+                                                .sort((a, b) => String.localeCompare(a.name,
+                                                                                     b.name)),
+                               ({ name, description }) =>
                                [["dt", {}, name],
                                 ["dd", {}, template.linkifyHelp(description, true)]],
                                "\n")]]);
-        });
+        }, true);
     },
     events: function initEvents() {
         events.listen(window, dactyl, "events", true);
@@ -1311,7 +1324,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     M: ["Always show messages outside of the status line"]
                 },
                 setter: function (opts) {
-                    if (loaded.commandline || ~opts.indexOf("c"))
+                    if (loaded.has("commandline") || ~opts.indexOf("c"))
                         commandline.widgets.updateVisibility();
                 }
             },
@@ -1321,7 +1334,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 }, config.guioptions),
                 setter: function (opts) {
                     for (let [opt, [, ids]] in Iterator(this.opts)) {
-                        ids.map(function (id) document.getElementById(id))
+                        ids.map(id => document.getElementById(id))
                            .forEach(function (elem) {
                             if (elem)
                                 dactyl.setNodeVisible(elem, opts.indexOf(opt) >= 0);
@@ -1337,10 +1350,9 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 },
                 setter: function (opts) {
                     let dir = ["horizontal", "vertical"].filter(
-                        function (dir) !Array.some(opts,
-                            function (o) this.opts[o] && this.opts[o][1] == dir, this),
-                        this);
-                    let class_ = dir.map(function (dir) "html|html > xul|scrollbar[orient=" + dir + "]");
+                        dir => !Array.some(opts,
+                                           o => this.opts[o] && this.opts[o][1] == dir));
+                    let class_ = dir.map(dir => "html|html > xul|scrollbar[orient=" + dir + "]");
 
                     styles.system.add("scrollbar", "*",
                                       class_.length ? class_.join(", ") + " { visibility: collapse !important; }" : "",
@@ -1364,10 +1376,6 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     styles.system.add("taboptions", "chrome://*",
                                       classes.length ? classes.join(",") + "{ display: none; }" : "");
 
-                    if (!dactyl.has("Gecko2")) {
-                        tabs.tabBinding.enabled = Array.some(opts, function (k) k in this.opts, this);
-                        tabs.updateTabCount();
-                    }
                     if (config.tabbrowser.tabContainer._positionPinnedTabs)
                         config.tabbrowser.tabContainer._positionPinnedTabs();
                 },
@@ -1376,7 +1384,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     Option.validIf(!/[nN]/.test(opts), "Tab numbering not available in this " + config.host + " version")
                  */
             }
-        ].filter(function (group) !group.feature || dactyl.has(group.feature));
+        ].filter(group => !group.feature || dactyl.has(group.feature));
 
         options.add(["guioptions", "go"],
             "Show or hide certain GUI elements like the menu or toolbar",
@@ -1387,7 +1395,8 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     "rb" + [k for ([k, v] in iter(groups[1].opts))
                             if (!Dactyl.toolbarHidden(document.getElementById(v[1][0])))].join(""),
 
-                values: array(groups).map(function (g) [[k, v[0]] for ([k, v] in Iterator(g.opts))]).flatten(),
+                values: array(groups).map(g => [[k, v[0]] for ([k, v] in Iterator(g.opts))])
+                                     .flatten(),
 
                 setter: function (value) {
                     for (let group in values(groups))
@@ -1395,13 +1404,9 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     events.checkFocus();
                     return value;
                 },
-                validator: function (val) Option.validateCompleter.call(this, val) &&
-                        groups.every(function (g) !g.validator || g.validator(val))
+                validator: function (val) Option.validateCompleter.call(this, val)
+                                       && groups.every(g => !g.validator || g.validator(val))
             });
-
-        options.add(["helpfile", "hf"],
-            "Name of the main help file",
-            "string", "intro");
 
         options.add(["loadplugins", "lpl"],
             "A regexp list that defines which plugins are loaded at startup and via :loadplugins",
@@ -1420,15 +1425,16 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                             document.title = document.title.replace(RegExp("(.*)" + util.regexp.escape(old)), "$1" + current);
                     }
 
-                    if (services.has("privateBrowsing")) {
+                    if (win.hasAttribute("titlemodifier_privatebrowsing")) {
                         let oldValue = win.getAttribute("titlemodifier_normal");
                         let suffix = win.getAttribute("titlemodifier_privatebrowsing").substr(oldValue.length);
 
                         win.setAttribute("titlemodifier_normal", value);
                         win.setAttribute("titlemodifier_privatebrowsing", value + suffix);
 
-                        if (services.privateBrowsing.privateBrowsingEnabled) {
+                        if (storage.privateMode) {
                             updateTitle(oldValue + suffix, value + suffix);
+                            win.setAttribute("titlemodifier", value + suffix);
                             return value;
                         }
                     }
@@ -1448,7 +1454,8 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
         options.add(["verbose", "vbs"],
             "Define which info messages are displayed",
             "number", 1,
-            { validator: function (value) Option.validIf(value >= 0 && value <= 15, "Value must be between 0 and 15") });
+            { validator: function (value) Option.validIf(value >= 0 && value <= 15,
+                                                         "Value must be between 0 and 15") });
 
         options.add(["visualbell", "vb"],
             "Use visual bell instead of beeping on errors",
@@ -1503,7 +1510,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 let arg = args[0] || "";
                 let items = dactyl.getMenuItems(arg);
 
-                dactyl.assert(items.some(function (i) i.dactylPath == arg),
+                dactyl.assert(items.some(i => i.dactylPath == arg),
                               _("emenu.notFound", arg));
 
                 for (let [, item] in Iterator(items)) {
@@ -1558,6 +1565,21 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 argCount: "1",
                 bang: true,
                 literal: 0
+            });
+
+        commands.add(["pr[ivate]", "pr0n", "porn"],
+            "Enable privacy features of a command, when applicable, and do not save the invocation in command history",
+            function (args) {
+                dactyl.withSavedValues(["forcePrivate"], function () {
+                    this.forcePrivate = true;
+                    dactyl.execute(args[0], null, true);
+                });
+            }, {
+                argCount: "1",
+                completer: function (context) completion.ex(context),
+                literal: 0,
+                privateData: "never-save",
+                subCommand: 0
             });
 
         commands.add(["exit", "x"],
@@ -1622,7 +1644,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 if (args["+purgecaches"])
                     cache.flush();
 
-                util.delay(function () { util.rehash(args) });
+                util.delay(() => { util.rehash(args) });
             },
             {
                 argCount: "0", // FIXME
@@ -1668,13 +1690,13 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
             };
 
             toolbarCommand(["toolbars[how]", "tbs[how]"], "Show the named toolbar",
-                function (toolbar) dactyl.setNodeVisible(toolbar, true),
-                function ({ item }) Dactyl.toolbarHidden(item));
+                toolbar => dactyl.setNodeVisible(toolbar, true),
+                ({ item }) => Dactyl.toolbarHidden(item));
             toolbarCommand(["toolbarh[ide]", "tbh[ide]"], "Hide the named toolbar",
-                function (toolbar) dactyl.setNodeVisible(toolbar, false),
-                function ({ item }) !Dactyl.toolbarHidden(item));
+                toolbar => dactyl.setNodeVisible(toolbar, false),
+                ({ item }) => !Dactyl.toolbarHidden(item));
             toolbarCommand(["toolbart[oggle]", "tbt[oggle]"], "Toggle the named toolbar",
-                function (toolbar) dactyl.setNodeVisible(toolbar, Dactyl.toolbarHidden(toolbar)));
+                toolbar => dactyl.setNodeVisible(toolbar, Dactyl.toolbarHidden(toolbar)));
         }
 
         commands.add(["time"],
@@ -1685,7 +1707,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 args = args[0] || "";
 
                 if (args[0] == ":")
-                    var func = function () commands.execute(args, null, false);
+                    var func = () => commands.execute(args, null, false);
                 else
                     func = dactyl.userFunc(args);
 
@@ -1808,7 +1830,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                     commandline.commandOutput([
                         ["div", {}, [config.appName, " ", config.version, date, " running on: "].join("")],
                         ["div", {}, [window.navigator.userAgent].join("")]
-                    ])
+                    ]);
                 }
             }, {
                 argCount: "0",
@@ -1820,7 +1842,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
     completion: function initCompletion() {
         completion.dialog = function dialog(context) {
             context.title = ["Dialog"];
-            context.filters.push(function ({ item }) !item[2] || item[2]());
+            context.filters.push(({ item }) => !item[2] || item[2]());
             context.completions = [[k, v[0], v[2]] for ([k, v] in Iterator(config.dialogs))];
         };
 
@@ -1832,7 +1854,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
                 description: function (item) item.getAttribute("label"),
                 highlight: function (item) item.disabled ? "Disabled" : ""
             };
-            context.generate = function () dactyl.menuItems;
+            context.generate = () => dactyl.menuItems;
         };
 
         var toolbox = document.getElementById("navigator-toolbox");
@@ -1844,7 +1866,8 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
 
         completion.window = function window(context) {
             context.title = ["Window", "Title"];
-            context.keys = { text: function (win) dactyl.windows.indexOf(win) + 1, description: function (win) win.document.title };
+            context.keys = { text: win => dactyl.windows.indexOf(win) + 1,
+                             description: win => win.document.title };
             context.completions = dactyl.windows;
         };
     },
@@ -1855,6 +1878,27 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
 
         userContext.DOM = Class("DOM", DOM, { init: function DOM_(sel, ctxt) DOM(sel, ctxt || buffer.focusedFrame.document) });
         userContext.$ = modules.userContext.DOM;
+
+        // Hack: disable disabling of Personas in private windows.
+        let root = document.documentElement;
+
+        if (PrivateBrowsingUtils && PrivateBrowsingUtils.isWindowPrivate(window)
+                && root._lightweightTheme
+                && root._lightweightTheme._lastScreenWidth == null) {
+
+            dactyl.withSavedValues.call(PrivateBrowsingUtils,
+                                        ["isWindowPrivate"], function () {
+                PrivateBrowsingUtils.isWindowPrivate = () => false;
+                Cu.import("resource://gre/modules/LightweightThemeConsumer.jsm", {})
+                  .LightweightThemeConsumer.call(root._lightweightTheme, document);
+            });
+        }
+
+        if (config.has("default-theme") && "CustomizableUI" in window)
+            overlay.overlayWindow(window, {
+                append: [
+                    ["window", { id: document.documentElement.id, "dactyl-australis": "true", xmlns: "xul" }]]
+            });
 
         dactyl.timeout(function () {
             try {
@@ -1894,7 +1938,7 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
             // dactyl.hideGUI();
 
             if (dactyl.userEval("typeof document", null, "test.js") === "undefined")
-                jsmodules.__proto__ = XPCSafeJSObjectWrapper(window);
+                jsmodules.__proto__ = window;
 
             if (dactyl.commandLineOptions.preCommands)
                 dactyl.commandLineOptions.preCommands.forEach(function (cmd) {
@@ -1966,4 +2010,4 @@ var Dactyl = Module("dactyl", XPCOM(Ci.nsISupportsWeakReference, ModuleBase), {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -27,7 +27,8 @@ var Tabs = Module("tabs", {
             config.tabStrip.collapsed = true;
 
         this.tabStyle = styles.system.add("tab-strip-hiding", config.styleableChrome,
-                                          (config.tabStrip.id ? "#" + config.tabStrip.id : ".tabbrowser-strip") +
+                                          (config.tabStrip.id ? "#" + config.tabStrip.id
+                                                              : ".tabbrowser-strip") +
                                               "{ visibility: collapse; }",
                                           false, true);
 
@@ -35,9 +36,9 @@ var Tabs = Module("tabs", {
             tabs.switchTo(event.originalTarget.getAttribute("identifier"));
         };
 
-        this.tabBinding = styles.system.add("tab-binding", "chrome://browser/content/browser.xul", literal(/*
+        this.tabBinding = styles.system.add("tab-binding", "chrome://browser/content/browser.xul", literal(function () /*
                 xul|tab { -moz-binding: url(chrome://dactyl/content/bindings.xml#tab) !important; }
-            */).replace(/tab-./g, function (m) config.OS.isMacOSX ? "tab-mac" : m),
+            */$).replace(/tab-./g, m => config.OS.isMacOSX ? "tab-mac" : m),
             false, true);
 
         this.timeout(function () {
@@ -57,7 +58,7 @@ var Tabs = Module("tabs", {
         }
     },
 
-    _alternates: Class.Memoize(function () [config.tabbrowser.mCurrentTab, null]),
+    _alternates: Class.Memoize(() => [config.tabbrowser.mCurrentTab, null]),
 
     cleanup: function cleanup() {
         for (let [i, tab] in Iterator(this.allTabs)) {
@@ -73,28 +74,26 @@ var Tabs = Module("tabs", {
 
     updateTabCount: function updateTabCount() {
         for (let [i, tab] in Iterator(this.visibleTabs)) {
-            if (dactyl.has("Gecko2")) {
-                let node = function node(class_) document.getAnonymousElementByAttribute(tab, "class", class_);
-                if (!node("dactyl-tab-number")) {
-                    let img = node("tab-icon-image");
-                    if (img) {
-                        let dom = DOM([
-                            ["xul:hbox", { highlight: "tab-number" },
-                                ["xul:label", { key: "icon", align: "center", highlight: "TabIconNumber",
-                                                class: "dactyl-tab-icon-number" }]],
-                            ["xul:hbox", { highlight: "tab-number" },
-                                ["html:div", { key: "label", highlight: "TabNumber",
-                                               class: "dactyl-tab-number" }]]],
-                            document).appendTo(img.parentNode);
+            let node = function node(class_) document.getAnonymousElementByAttribute(tab, "class", class_);
+            if (!node("dactyl-tab-number")) {
+                let img = node("tab-icon-image");
+                if (img) {
+                    let dom = DOM([
+                        ["xul:hbox", { highlight: "tab-number" },
+                            ["xul:label", { key: "icon", align: "center", highlight: "TabIconNumber",
+                                            class: "dactyl-tab-icon-number" }]],
+                        ["xul:hbox", { highlight: "tab-number" },
+                            ["html:div", { key: "label", highlight: "TabNumber",
+                                           class: "dactyl-tab-number" }]]],
+                        document).appendTo(img.parentNode);
 
-                        update(tab, {
-                            get dactylOrdinal() Number(dom.nodes.icon.value),
-                            set dactylOrdinal(i) {
-                                dom.nodes.icon.value = dom.nodes.label.textContent = i;
-                                this.setAttribute("dactylOrdinal", i);
-                            }
-                        });
-                    }
+                    update(tab, {
+                        get dactylOrdinal() Number(dom.nodes.icon.value),
+                        set dactylOrdinal(i) {
+                            dom.nodes.icon.value = dom.nodes.label.textContent = i;
+                            this.setAttribute("dactylOrdinal", i);
+                        }
+                    });
                 }
             }
             tab.dactylOrdinal = i + 1;
@@ -139,7 +138,7 @@ var Tabs = Module("tabs", {
      */
     get options() this.localStore.options,
 
-    get visibleTabs() config.tabbrowser.visibleTabs || this.allTabs.filter(function (tab) !tab.hidden),
+    get visibleTabs() config.tabbrowser.visibleTabs || this.allTabs.filter(tab => !tab.hidden),
 
     /**
      * Returns the local state store for the tab at the specified *tabIndex*.
@@ -237,14 +236,14 @@ var Tabs = Module("tabs", {
             return this._groups;
 
         if (func)
-            func = bind(function (func) { func(this._groups) }, this, func);
+            func = bind(function (func) { func(this._groups); }, this, func);
 
         if (window.TabView && window.TabView._initFrame)
             window.TabView._initFrame(func);
 
         this._groups = iframe ? iframe.contentWindow : null;
         if (this._groups && !func)
-            util.waitFor(function () this._groups.TabItems, this);
+            util.waitFor(() => this._groups.TabItems);
         return this._groups;
     },
 
@@ -335,7 +334,6 @@ var Tabs = Module("tabs", {
         completion.listCompleter("buffer", filter);
     },
 
-
     /**
      * Return an iterator of tabs matching the given filter. If no
      * *filter* or *count* is provided, returns the currently selected
@@ -409,8 +407,7 @@ var Tabs = Module("tabs", {
      * @param {number} count How many tabs to remove.
      * @param {boolean} focusLeftTab Focus the tab to the left of the removed tab.
      */
-    remove: function remove(tab, count, focusLeftTab) {
-        count = count || 1;
+    remove: function remove(tab, count=1, focusLeftTab=false) {
         let res = this.count > count;
 
         let tabs = this.visibleTabs;
@@ -427,9 +424,13 @@ var Tabs = Module("tabs", {
         }
 
         if (focusLeftTab)
-            tabs.slice(Math.max(0, index + 1 - count), index + 1).forEach(config.closure.removeTab);
+            tabs.slice(Math.max(0, index + 1 - count),
+                       index + 1)
+                .forEach(config.bound.removeTab);
         else
-            tabs.slice(index, index + count).forEach(config.closure.removeTab);
+            tabs.slice(index,
+                       index + count)
+                .forEach(config.bound.removeTab);
         return res;
     },
 
@@ -549,11 +550,11 @@ var Tabs = Module("tabs", {
         if (matches)
             return tabs.select(this.allTabs[parseInt(matches[1], 10) - 1], false);
 
-        matches = array.nth(tabs.allTabs, function (t) (t.linkedBrowser.lastURI || {}).spec === buffer, 0);
+        matches = tabs.allTabs.find(t => (t.linkedBrowser.lastURI || {}).spec === buffer);
         if (matches)
             return tabs.select(matches, false);
 
-        matches = completion.runCompleter("buffer", buffer).map(function (obj) obj.tab);
+        matches = completion.runCompleter("buffer", buffer).map(obj => obj.tab);
 
         if (matches.length == 0)
             dactyl.echoerr(_("buffer.noMatching", buffer));
@@ -651,7 +652,7 @@ var Tabs = Module("tabs", {
                 count: true,
                 completer: function (context, args) {
                     if (!args.bang)
-                        context.filters.push(function ({ item }) !item.tab.pinned);
+                        context.filters.push(({ item }) => !item.tab.pinned);
                     completion.buffer(context);
                 }
             });
@@ -666,7 +667,7 @@ var Tabs = Module("tabs", {
                 argCount: "?",
                 count: true,
                 completer: function (context, args) {
-                    context.filters.push(function ({ item }) item.tab.pinned);
+                    context.filters.push(({ item }) => item.tab.pinned);
                     completion.buffer(context);
                 }
             });
@@ -731,7 +732,7 @@ var Tabs = Module("tabs", {
 
         commands.add(["tabl[ast]", "bl[ast]"],
             "Switch to the last tab",
-            function () tabs.select("$", false),
+            function () { tabs.select("$", false); },
             { argCount: "0" });
 
         // TODO: "Zero count" if 0 specified as arg
@@ -795,7 +796,12 @@ var Tabs = Module("tabs", {
         if (config.has("tabbrowser")) {
             commands.add(["b[uffer]"],
                 "Switch to a buffer",
-                function (args) { tabs.switchTo(args[0], args.bang, args.count); }, {
+                function (args) {
+                    if (args.length)
+                        tabs.switchTo(args[0], args.bang, args.count);
+                    else if (args.count)
+                        tabs.switchTo(String(args.count));
+                }, {
                     argCount: "?",
                     bang: true,
                     count: true,
@@ -894,10 +900,10 @@ var Tabs = Module("tabs", {
             commands.add(["taba[ttach]"],
                 "Attach the current tab to another window",
                 function (args) {
-                    dactyl.assert(args.length <= 2 && !args.some(function (i) !/^\d+(?:$|:)/.test(i)),
+                    dactyl.assert(args.length <= 2 && !args.some(i => !/^\d+(?:$|:)/.test(i)),
                                   _("error.trailingCharacters"));
 
-                    let [winIndex, tabIndex] = args.map(function (arg) parseInt(arg));
+                    let [winIndex, tabIndex] = args.map(arg => parseInt(arg));
                     if (args["-group"]) {
                         util.assert(args.length == 1);
                         window.TabView.moveTabTo(tabs.getTab(), winIndex);
@@ -913,12 +919,6 @@ var Tabs = Module("tabs", {
                     let modules     = win.dactyl.modules;
                     let { browser } = modules.config;
 
-                    if (args[1]) {
-                        let tabList = modules.tabs.visibleTabs;
-                        let target  = dactyl.assert(tabList[tabIndex]);
-                        tabIndex = Array.indexOf(tabs.allTabs, target) - 1;
-                    }
-
                     let newTab = browser.addTab("about:blank");
                     browser.stop();
                     // XXX: the implementation of DnD in tabbrowser.xml suggests
@@ -926,10 +926,13 @@ var Tabs = Module("tabs", {
                     // without this reference?
                     browser.docShell;
 
-                    let last = modules.tabs.allTabs.length - 1;
+                    if (args[1]) {
+                        let { visibleTabs, allTabs } = modules.tabs;
+                        tabIndex = Math.constrain(tabIndex, 1, visibleTabs.length);
+                        let target = visibleTabs[tabIndex - 1];
+                        browser.moveTabTo(newTab, Array.indexOf(allTabs, target));
+                    }
 
-                    if (args[1])
-                        browser.moveTabTo(newTab, tabIndex);
                     browser.selectedTab = newTab; // required
                     browser.swapBrowsersAndCloseOther(newTab, sourceTab);
                 }, {
@@ -941,7 +944,7 @@ var Tabs = Module("tabs", {
                             if (args["-group"])
                                 completion.tabGroup(context);
                             else {
-                                context.filters.push(function ({ item }) item != window);
+                                context.filters.push(({ item }) => item != window);
                                 completion.window(context);
                             }
                             break;
@@ -993,7 +996,9 @@ var Tabs = Module("tabs", {
                         context.anchored = false;
                         context.compare = CompletionContext.Sort.unsorted;
                         context.filters = [CompletionContext.Filter.textDescription];
-                        context.keys = { text: function ([i, { state: s }]) (i + 1) + ": " + s.entries[s.index - 1].url, description: "[1].title", icon: "[1].image" };
+                        context.keys = { text: function ([i, { state: s }]) (i + 1) + ": " + s.entries[s.index - 1].url,
+                                         description: "[1].title",
+                                         icon: "[1].image" };
                         context.completions = Iterator(tabs.closedTabs);
                     },
                     count: true,
@@ -1032,7 +1037,7 @@ var Tabs = Module("tabs", {
             tabs.getGroups();
             tabs[visible ? "visibleTabs" : "allTabs"].forEach(function (tab, i) {
                 let group = (tab.tabItem || tab._tabViewTabItem || defItem).parent || defItem.parent;
-                if (!Set.has(tabGroups, group.id))
+                if (!hasOwnProperty(tabGroups, group.id))
                     tabGroups[group.id] = [group.getTitle(), []];
 
                 group = tabGroups[group.id];
@@ -1062,7 +1067,7 @@ var Tabs = Module("tabs", {
             for (let [id, vals] in Iterator(tabGroups))
                 context.fork(id, 0, this, function (context, [name, browsers]) {
                     context.title = [name || "Buffers"];
-                    context.generate = function ()
+                    context.generate = () =>
                         Array.map(browsers, function ([i, browser]) {
                             let indicator = " ";
                             if (i == tabs.index())
@@ -1090,7 +1095,7 @@ var Tabs = Module("tabs", {
             context.keys = {
                 text: "id",
                 description: function (group) group.getTitle() ||
-                    group.getChildren().map(function (t) t.tab.label).join(", ")
+                    group.getChildren().map(t => t.tab.label).join(", ")
             };
             context.generate = function () {
                 context.incomplete = true;
@@ -1108,7 +1113,7 @@ var Tabs = Module("tabs", {
         }
         for (let event in values(["TabMove", "TabOpen", "TabClose"]))
             events.listen(tabContainer, event, callback, false);
-        events.listen(tabContainer, "TabSelect", tabs.closure._onTabSelect, false);
+        events.listen(tabContainer, "TabSelect", tabs.bound._onTabSelect, false);
     },
     mappings: function initMappings() {
 
@@ -1167,12 +1172,12 @@ var Tabs = Module("tabs", {
 
             mappings.add([modes.NORMAL], ["d"],
                 "Delete current buffer",
-                function ({ count }) { tabs.remove(tabs.getTab(), count, false); },
+                function ({ count }) { tabs.remove(tabs.getTab(), count || 1, false); },
                 { count: true });
 
             mappings.add([modes.NORMAL], ["D"],
                 "Delete current buffer, focus tab to the left",
-                function ({ count }) { tabs.remove(tabs.getTab(), count, true); },
+                function ({ count }) { tabs.remove(tabs.getTab(), count || 1, true); },
                 { count: true });
 
             mappings.add([modes.NORMAL], ["gb"],
@@ -1218,7 +1223,7 @@ var Tabs = Module("tabs", {
                         tabs.tabStyle.enabled = false;
                     }
 
-                    if (value !== "multitab" || !dactyl.has("Gecko2"))
+                    if (value !== "multitab")
                         if (tabs.xulTabs)
                             tabs.xulTabs.visible = value !== "never";
                         else
@@ -1257,11 +1262,11 @@ var Tabs = Module("tabs", {
                     values: activateGroups,
                     has: Option.has.toggleAll,
                     setter: function (newValues) {
-                        let valueSet = Set(newValues);
+                        let valueSet = RealSet(newValues);
                         for (let group in values(activateGroups))
                             if (group[2])
                                 prefs.safeSet("browser.tabs." + group[2],
-                                              !(valueSet["all"] ^ valueSet[group[0]]),
+                                              !(valueSet.has("all") ^ valueSet.has(group[0])),
                                               _("option.safeSet", "activate"));
                         return newValues;
                     }
@@ -1312,4 +1317,4 @@ var Tabs = Module("tabs", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

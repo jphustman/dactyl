@@ -1,15 +1,15 @@
 <?xml version="1.0"?>
 <RDF xmlns="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-    xmlns:em="http://www.mozilla.org/2004/em-rdf#">
-    <Description about="urn:mozilla:install-manifest">
-        <em:id>pentadactyl@dactyl.googlecode.com</em:id>
-        <em:type>2</em:type>
-        <em:name>Pentadactyl</em:name>
-        <em:version>1.1pre</em:version>
-        <em:description>Firefox for Vim and Links addicts</em:description>
-        <em:homepageURL>http://5digits.org/pentadactyl</em:homepageURL>
-        <em:bootstrap>true</em:bootstrap>
-        <em:strictCompatibility>true</em:strictCompatibility>
+     xmlns:em="http://www.mozilla.org/2004/em-rdf#">
+    <Description about="urn:mozilla:install-manifest"
+        em:id="pentadactyl@dactyl.googlecode.com"
+        em:type="2"
+        em:name="Pentadactyl"
+        em:version="1.2pre"
+        em:description="Firefox for Vim and Links addicts"
+        em:homepageURL="http://5digits.org/pentadactyl"
+        em:bootstrap="true"
+        em:strictCompatibility="true">
 
         <em:creator>Kris Maglione, Doug Kearns</em:creator>
         <em:developer>Kris Maglione</em:developer>
@@ -27,15 +27,14 @@
         <em:contributor>Martin Stubenschrott</em:contributor>
         <em:contributor>Conrad Irwin</em:contributor>
         <em:contributor>Štěpán Němec</em:contributor>
-    </Description>
 
-    <em:targetApplication>
-        <Description>
-            <em:id>{ec8030f7-c20a-464f-9b0e-13a3a9e97384}</em:id>
-            <em:minVersion>8.0</em:minVersion>
-            <em:maxVersion>20.0a1</em:maxVersion>
-        </Description>
-    </em:targetApplication>
+        <em:targetApplication>
+            <Description
+                em:id="{ec8030f7-c20a-464f-9b0e-13a3a9e97384}"
+                em:minVersion="31.0"
+                em:maxVersion="33.*"/>
+        </em:targetApplication>
+    </Description>
 </RDF>
 
 <!-- vim: set fdm=marker sw=4 ts=4 et: -->

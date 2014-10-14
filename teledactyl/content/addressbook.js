@@ -73,7 +73,7 @@ var Addressbook = Module("addressbook", {
             // Now we have to create a new message
             let args = {};
             args.to = addresses.map(
-                function (address) "\"" + address[0].replace(/"/g, "") + " <" + address[1] + ">\""
+                address => "\"" + address[0].replace(/"/g, "") + " <" + address[1] + ">\""
             ).join(", ");
 
             mail.composeNewMail(args);
@@ -152,4 +152,4 @@ var Addressbook = Module("addressbook", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

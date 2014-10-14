@@ -11,7 +11,7 @@ var Config = Module("config", ConfigBase, {
             init.superapply(this, arguments);
 
             if (!("content" in modules))
-                modules.__defineGetter__("content", function () window.content);
+                modules.__defineGetter__("content", () => window.content);
 
             util.overlayWindow(window, { append: <><hbox id="statusTextBox" flex=""/></> });
         },
@@ -116,10 +116,7 @@ var Config = Module("config", ConfigBase, {
                     modes.main = modes.MESSAGE;
             }
         }
-    },
-
-    // to allow Vim to :set ft=mail automatically
-    tempFile: "teledactyl.eml"
+    }
 }, {
 }, {
     commands: function initCommands(dactyl, modules, window) {
@@ -165,4 +162,4 @@ var Config = Module("config", ConfigBase, {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

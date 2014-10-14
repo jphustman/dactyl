@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -75,9 +75,7 @@ var RangeFinder = Module("rangefinder", {
         this.find("", mode == this.modes.FIND_BACKWARD);
     },
 
-    bootstrap: function bootstrap(str, backward) {
-        if (arguments.length < 2 && this.rangeFind)
-            backward = this.rangeFind.reverse;
+    bootstrap: function bootstrap(str, backward=this.rangeFind && this.rangeFind.reverse) {
 
         let highlighted = this.rangeFind && this.rangeFind.highlighted;
         let selections = this.rangeFind && this.rangeFind.selections;
@@ -104,7 +102,7 @@ var RangeFinder = Module("rangefinder", {
             return "";
         }
 
-        this.options["findflags"].forEach(function (f) replacer(f, f));
+        this.options["findflags"].forEach(f => replacer(f, f));
 
         let pattern = str.replace(/\\(.|$)/g, replacer);
 
@@ -255,10 +253,10 @@ var RangeFinder = Module("rangefinder", {
 
             get prompt() this.mode === modules.modes.FIND_BACKWARD ? "?" : "/",
 
-            get onCancel() modules.rangefinder.closure.onCancel,
-            get onChange() modules.rangefinder.closure.onChange,
-            get onHistory() modules.rangefinder.closure.onHistory,
-            get onSubmit() modules.rangefinder.closure.onSubmit
+            get onCancel()  modules.rangefinder.bound.onCancel,
+            get onChange()  modules.rangefinder.bound.onChange,
+            get onHistory() modules.rangefinder.bound.onHistory,
+            get onSubmit()  modules.rangefinder.bound.onSubmit
         });
     },
     mappings: function initMappings(dactyl, modules, window) {
@@ -430,7 +428,7 @@ var RangeFind = Class("RangeFind", {
     findRange: function findRange(range) {
         let doc = range.startContainer.ownerDocument;
         let win = doc.defaultView;
-        let ranges = this.ranges.filter(function (r)
+        let ranges = this.ranges.filter(r =>
             r.window === win && RangeFind.sameDocument(r.range, range) && RangeFind.contains(r.range, range));
 
         if (this.backward)
@@ -516,7 +514,7 @@ var RangeFind = Class("RangeFind", {
     },
 
     iter: function iter(word) {
-        let saved = ["lastRange", "lastString", "range", "regexp"].map(function (s) [s, this[s]], this);
+        let saved = ["lastRange", "lastString", "range", "regexp"].map(s => [s, this[s]]);
         let res;
         try {
             let regexp = this.regexp && word != util.regexp.escape(word);
@@ -542,7 +540,7 @@ var RangeFind = Class("RangeFind", {
             }
         }
         finally {
-            saved.forEach(function ([k, v]) this[k] = v, this);
+            saved.forEach(([k, v]) => { this[k] = v; });
         }
     },
 
@@ -611,7 +609,7 @@ var RangeFind = Class("RangeFind", {
         this.range = this.findRange(this.startRange) || this.ranges[0];
         util.assert(this.range, "Null range", false);
         this.ranges.first = this.range;
-        this.ranges.forEach(function (range) range.save());
+        this.ranges.forEach(range => { range.save(); });
         this.forward = null;
         this.found = false;
     },
@@ -628,7 +626,7 @@ var RangeFind = Class("RangeFind", {
         if (!this.matchCase)
             pattern = pattern.toLowerCase();
 
-        if (!again && (pattern === "" || pattern.indexOf(this.lastString) !== 0 || this.backward)) {
+        if (!again && (pattern === "" || !pattern.startsWith(this.lastString) || this.backward)) {
             if (!private_)
                 this.range.deselect();
             if (pattern === "")
@@ -709,12 +707,12 @@ var RangeFind = Class("RangeFind", {
 
     addListeners: function addListeners() {
         for (let range in array.iterValues(this.ranges))
-            range.window.addEventListener("unload", this.closure.onUnload, true);
+            range.window.addEventListener("unload", this.bound.onUnload, true);
     },
     purgeListeners: function purgeListeners() {
         for (let range in array.iterValues(this.ranges))
             try {
-                range.window.removeEventListener("unload", this.closure.onUnload, true);
+                range.window.removeEventListener("unload", this.bound.onUnload, true);
             }
             catch (e if e.result === Cr.NS_ERROR_FAILURE) {}
     },
@@ -837,7 +835,7 @@ var RangeFind = Class("RangeFind", {
         }
         return true;
     },
-    selectNodePath: ["a", "xhtml:a", "*[@onclick]"].map(function (p) "ancestor-or-self::" + p).join(" | "),
+    selectNodePath: ["a", "xhtml:a", "*[@onclick]"].map(p => "ancestor-or-self::" + p).join(" | "),
     union: function union(a, b) {
         let start = a.compareBoundaryPoints(a.START_TO_START, b) < 0 ? a : b;
         let end   = a.compareBoundaryPoints(a.END_TO_END, b) > 0 ? a : b;
@@ -851,4 +849,4 @@ var RangeFind = Class("RangeFind", {
 
 endModule();
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

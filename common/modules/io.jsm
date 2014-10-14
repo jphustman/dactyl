@@ -1,7 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2012 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
-// Some code based on Venkman
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -16,6 +15,7 @@ defineModule("io", {
 
 lazyRequire("config", ["config"]);
 lazyRequire("contexts", ["Contexts", "contexts"]);
+lazyRequire("promises", ["Promise"]);
 lazyRequire("storage", ["File", "storage"]);
 lazyRequire("styles", ["styles"]);
 lazyRequire("template", ["template"]);
@@ -42,7 +42,7 @@ var IO = Module("io", {
             this._oldcwd = null;
 
             this._lastRunCommand = ""; // updated whenever the users runs a command with :!
-            this._scriptNames = [];
+            this._scriptNames = RealSet();
         },
 
         CommandFileMode: Class("CommandFileMode", modules.CommandMode, {
@@ -74,8 +74,8 @@ var IO = Module("io", {
          */
         getRuntimeDirectories: function getRuntimeDirectories(name) {
             return modules.options.get("runtimepath").files
-                .map(function (dir) dir.child(name))
-                .filter(function (dir) dir.exists() && dir.isDirectory() && dir.isReadable());
+                .map(dir => dir.child(name))
+                .filter(dir => (dir.exists() && dir.isDirectory() && dir.isReadable()));
         },
 
         // FIXME: multiple paths?
@@ -149,14 +149,14 @@ var IO = Module("io", {
                     let sourceJSM = function sourceJSM() {
                         context = contexts.Module(uri);
                         dactyl.triggerObserver("io.source", context, file, file.lastModifiedTime);
-                    }
+                    };
 
-                    if (/\.js,$/.test(filename))
+                    if (/\.jsm$/.test(filename))
                         sourceJSM();
                     else if (/\.js$/.test(filename)) {
                         try {
                             var context = contexts.Script(file, params.group);
-                            if (Set.has(this._scriptNames, file.path))
+                            if (this._scriptNames.has(file.path))
                                 util.flushCache();
 
                             dactyl.loadScript(uri.spec, context);
@@ -168,6 +168,8 @@ var IO = Module("io", {
                                 sourceJSM();
                             }
                             else {
+                                if (e instanceof Finished)
+                                    return;
                                 if (e.fileName && !(e instanceof FailedAssertion))
                                     try {
                                         e.fileName = util.fixURI(e.fileName);
@@ -194,7 +196,7 @@ var IO = Module("io", {
                         dactyl.triggerObserver("io.source", context, file, file.lastModifiedTime);
                     }
 
-                    Set.add(this._scriptNames, file.path);
+                    this._scriptNames.add(file.path);
 
                     dactyl.echomsg(_("io.sourcingEnd", filename.quote()), 2);
                     dactyl.log(_("dactyl.sourced", filename), 3);
@@ -213,6 +215,28 @@ var IO = Module("io", {
             }, this);
         }
     }),
+
+    charsets: Class.Memoize(function () {
+        const BASE = "@mozilla.org/intl/unicode/decoder;1?charset=";
+        return [k.slice(BASE.length)
+                for (k of Object.keys(Cc))
+                if (k.startsWith(BASE))];
+    }),
+
+    charsetBundle: Class.Memoize(
+        () => services.stringBundle.createBundle("chrome://global/locale/charsetTitles.properties")),
+
+    charsetTitle: function charsetTitle(charset, default_=charset) {
+        try {
+            return this.charsetBundle.GetStringFromName(charset + ".title");
+        }
+        catch (e) {}
+        return default_;
+    },
+
+    validateCharset: function validateCharset(charset) {
+        new TextDecoder(charset);
+    },
 
     // TODO: there seems to be no way, short of a new component, to change
     // the process's CWD - see https://bugzilla.mozilla.org/show_bug.cgi?id=280953
@@ -239,11 +263,13 @@ var IO = Module("io", {
     /**
      * Sets the current working directory.
      *
-     * @param {string} newDir The new CWD. This may be a relative or
+     * @param {File|string} newDir The new CWD. This may be a relative or
      *     absolute path and is expanded by {@link #expandPath}.
+     *     @optional
+     *     @default = "~"
      */
-    set cwd(newDir) {
-        newDir = newDir && newDir.path || newDir || "~";
+    set cwd(newDir = "~") {
+        newDir = newDir.path || newDir;
 
         if (newDir == "-") {
             util.assert(this._oldcwd != null, _("io.noPrevDir"));
@@ -264,8 +290,8 @@ var IO = Module("io", {
      */
     File: Class.Memoize(function () let (io = this)
         Class("File", File, {
-            init: function init(path, checkCWD)
-                init.supercall(this, path, (arguments.length < 2 || checkCWD) && io.cwd)
+            init: function init(path, checkCWD=true)
+                init.supercall(this, path, checkCWD && io.cwd)
         })),
 
     /**
@@ -305,23 +331,20 @@ var IO = Module("io", {
     },
 
     /**
-     * Creates a temporary file.
+     * Returns a temporary file.
      *
+     * @param {string} ext The filename extension.
+     *     @default "txt"
+     * @param {string} label A metadata string appended to the filename. Useful
+     *     for identifying the file, beyond its extension, to external
+     *     applications.
+     *     @default ""
      * @returns {File}
      */
-    createTempFile: function createTempFile(name, type) {
-        if (name instanceof Ci.nsIFile) {
-            var file = name.clone();
-            if (!type || type == "file")
-                file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, octal(666));
-            else
-                file.createUnique(Ci.nsIFile.DIRECTORY_TYPE, octal(777));
-        }
-        else {
-            file = services.directory.get("TmpD", Ci.nsIFile);
-            file.append(this.config.tempFile + (name ? "." + name : ""));
-            file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, octal(666));
-        }
+    createTempFile: function createTempFile(ext="txt", label="") {
+        let file = services.directory.get("TmpD", Ci.nsIFile);
+        file.append(config.name + label + "." + ext);
+        file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o666);
 
         services.externalApp.deleteTemporaryFileOnExit(file);
 
@@ -446,26 +469,29 @@ var IO = Module("io", {
 
         let process = services.Process(file.file);
         process.run(false, args.map(String), args.length);
-        try {
-            if (callable(blocking))
-                var timer = services.Timer(
-                    function () {
-                        if (!process.isRunning) {
-                            timer.cancel();
-                            util.trapErrors(blocking, self, process.exitValue);
-                        }
-                    },
-                    100, services.Timer.TYPE_REPEATING_SLACK);
-            else if (blocking)
-                while (process.isRunning)
-                    util.threadYield(false, true);
-        }
-        catch (e) {
-            process.kill();
-            throw e;
+
+        let deferred = Promise.defer();
+
+        if (callable(blocking))
+            // Deprecated.
+            deferred.promise.then(blocking);
+        else if (blocking) {
+            // Deprecated?
+            while (process.isRunning)
+                util.threadYield(false, true);
+            return process.exitValue;
         }
 
-        return process.exitValue;
+        let timer = services.Timer(
+            function () {
+                if (!process.isRunning) {
+                    timer.cancel();
+                    deferred.resolve(process.exitValue);
+                }
+            },
+            100, services.Timer.TYPE_REPEATING_SLACK);
+
+        return deferred.promise;
     },
 
     // TODO: when https://bugzilla.mozilla.org/show_bug.cgi?id=68702 is
@@ -485,7 +511,7 @@ var IO = Module("io", {
     system: function system(command, input, callback) {
         util.dactyl.echomsg(_("io.callingShell", command), 4);
 
-        let { shellEscape } = util.closure;
+        let { shellEscape } = util.bound;
 
         return this.withTempFiles(function (stdin, stdout, cmd) {
             if (input instanceof File)
@@ -503,7 +529,9 @@ var IO = Module("io", {
 
             function async(status) {
                 let output = stdout.read();
-                [stdin, stdout, cmd].forEach(function (f) f.exists() && f.remove(false));
+                for (let f of [stdin, stdout, cmd])
+                    if (f.exists())
+                        f.remove(false);
                 callback(result(status, output));
             }
 
@@ -541,9 +569,9 @@ var IO = Module("io", {
      * @returns {boolean} false if temp files couldn't be created,
      *     otherwise, the return value of *func*.
      */
-    withTempFiles: function withTempFiles(func, self, checked, ext) {
+    withTempFiles: function withTempFiles(func, self, checked, ext, label) {
         let args = array(util.range(0, func.length))
-                    .map(bind("createTempFile", this, ext)).array;
+                    .map(bind("createTempFile", this, ext, label)).array;
         try {
             if (!args.every(util.identity))
                 return false;
@@ -551,7 +579,7 @@ var IO = Module("io", {
         }
         finally {
             if (!checked || res !== true)
-                args.forEach(function (f) f.remove(false));
+                args.forEach(f => { f.remove(false); });
         }
         return res;
     }
@@ -637,7 +665,7 @@ var IO = Module("io", {
                 lines.push("\n\" vim: set ft=" + config.name + ":");
 
                 try {
-                    file.write(lines.join("\n"));
+                    file.write(lines.join("\n").concat("\n"));
                     dactyl.echomsg(_("io.writing", file.path.quote()), 2);
                 }
                 catch (e) {
@@ -673,14 +701,14 @@ var IO = Module("io", {
                     item.file = file;
                 }
 
-                rtItems.ftdetect.template = // {{{
-literal(/*" Vim filetype detection file
+                rtItems.ftdetect.template = //{{{
+literal(function () /*" Vim filetype detection file
 <header>
 
 au BufNewFile,BufRead *<name>rc*,*.<fileext> set filetype=<name>
-*/);//}}}
-                rtItems.ftplugin.template = // {{{
-literal(/*" Vim filetype plugin file
+*/$);//}}}
+                rtItems.ftplugin.template = //{{{
+literal(function () /*" Vim filetype plugin file
 <header>
 
 if exists("b:did_ftplugin")
@@ -705,9 +733,9 @@ endif
 
 let &cpo = s:cpo_save
 unlet s:cpo_save
-*/);//}}}
-                rtItems.syntax.template = // {{{
-literal(/*" Vim syntax file
+*/$);//}}}
+                rtItems.syntax.template = //{{{
+literal(function () /*" Vim syntax file
 <header>
 
 if exists("b:current_syntax")
@@ -786,7 +814,7 @@ let &cpo = s:cpo_save
 unlet s:cpo_save
 
 " vim: tw=130 et ts=8 sts=4 sw=4:
-*/);//}}}
+*/$);//}}}
 
                 const { options } = modules;
 
@@ -807,10 +835,12 @@ unlet s:cpo_save
                         lines.last.push(item, sep);
                     }
                     lines.last.pop();
-                    return lines.map(function (l) l.join("")).join("\n").replace(/\s+\n/gm, "\n");
+                    return lines.map(l => l.join(""))
+                                .join("\n")
+                                .replace(/\s+\n/gm, "\n");
                 }//}}}
 
-                let params = { // {{{
+                let params = { //{{{
                     header: ['" Language:    ' + config.appName + ' configuration file',
                              '" Maintainer:  Doug Kearns <dougkearns@gmail.com>',
                              '" Version:     ' + config.version].join("\n"),
@@ -828,7 +858,7 @@ unlet s:cpo_save
                                         array(o.realNames for (o in options) if (o.type == "boolean"))
                                             .flatten().map(String.quote),
                                         ", ") + "]"
-                }; // }}}
+                }; //}}}
 
                 for (let { file, template } in values(rtItems)) {
                     try {
@@ -860,7 +890,7 @@ unlet s:cpo_save
         commands.add(["scrip[tnames]"],
             "List all sourced script names",
             function () {
-                let names = Object.keys(io._scriptNames);
+                let names = [k for (k of io._scriptNames)];
                 if (!names.length)
                     dactyl.echomsg(_("command.scriptnames.none"));
                 else
@@ -905,8 +935,8 @@ unlet s:cpo_save
                         _("command.run.noPrevious"));
 
                     arg = arg.replace(/(\\)*!/g,
-                        function (m) /^\\(\\\\)*!$/.test(m) ? m.replace("\\!", "!") : m.replace("!", io._lastRunCommand)
-                    );
+                                      m => (/^\\(\\\\)*!$/.test(m) ? m.replace("\\!", "!")
+                                                                   : m.replace("!", io._lastRunCommand)));
                 }
 
                 io._lastRunCommand = arg;
@@ -934,30 +964,23 @@ unlet s:cpo_save
             context.anchored = false;
             context.keys = {
                 text: util.identity,
-                description: function (charset) {
-                    try {
-                        return services.charset.getCharsetTitle(charset);
-                    }
-                    catch (e) {
-                        return charset;
-                    }
-                }
+                description: charset => io.charsetTitle(charset),
             };
-            context.generate = function () iter(services.charset.getDecoderList());
+            context.completions = io.charsets;
         };
 
         completion.directory = function directory(context, full) {
             this.file(context, full);
-            context.filters.push(function (item) item.isdir);
+            context.filters.push(item => item.isdir);
         };
 
         completion.environment = function environment(context) {
             context.title = ["Environment Variable", "Value"];
-            context.generate = function ()
+            context.generate = () =>
                 io.system(config.OS.isWindows ? "set" : "env")
                   .output.split("\n")
-                  .filter(function (line) line.indexOf("=") > 0)
-                  .map(function (line) line.match(/([^=]+)=(.*)/).slice(1));
+                  .filter(line => line.indexOf("=") > 0)
+                  .map(line => line.match(/([^=]+)=(.*)/).slice(1));
         };
 
         completion.file = function file(context, full, dir) {
@@ -984,10 +1007,10 @@ unlet s:cpo_save
                 icon: function (f) this.isdir ? "resource://gre/res/html/folder.png"
                                               : "moz-icon://" + f.leafName
             };
-            context.compare = function (a, b) b.isdir - a.isdir || String.localeCompare(a.text, b.text);
+            context.compare = (a, b) => b.isdir - a.isdir || String.localeCompare(a.text, b.text);
 
             if (modules.options["wildignore"])
-                context.filters.push(function (item) !modules.options.get("wildignore").getKey(item.path));
+                context.filters.push(item => !modules.options.get("wildignore").getKey(item.path));
 
             // context.background = true;
             context.key = dir;
@@ -1039,7 +1062,7 @@ unlet s:cpo_save
         };
 
         completion.addUrlCompleter("file", "Local files", function (context, full) {
-            let match = util.regexp(literal(/*
+            let match = util.regexp(literal(function () /*
                 ^
                 (?P<prefix>
                     (?P<proto>
@@ -1050,12 +1073,12 @@ unlet s:cpo_save
                 )
                 (?P<path> \/[^\/]* )?
                 $
-            */), "x").exec(context.filter);
+            */$), "x").exec(context.filter);
             if (match) {
                 if (!match.path) {
                     context.key = match.proto;
                     context.advance(match.proto.length);
-                    context.generate = function () config.chromePackages.map(function (p) [p, match.proto + p + "/"]);
+                    context.generate = () => config.chromePackages.map(p => [p, match.proto + p + "/"]);
                 }
                 else if (match.scheme === "chrome") {
                     context.key = match.prefix;
@@ -1122,8 +1145,8 @@ unlet s:cpo_save
             "List of directories searched when executing :cd",
             "stringlist", ["."].concat(services.environment.get("CDPATH").split(/[:;]/).filter(util.identity)).join(","),
             {
-                get files() this.value.map(function (path) File(path, modules.io.cwd))
-                                .filter(function (dir) dir.exists()),
+                get files() this.value.map(path => File(path, modules.io.cwd))
+                                .filter(dir => dir.exists()),
                 setter: function (value) File.expandPathList(value)
             });
 
@@ -1131,8 +1154,8 @@ unlet s:cpo_save
             "List of directories searched for runtime files",
             "stringlist", IO.runtimePath,
             {
-                get files() this.value.map(function (path) File(path, modules.io.cwd))
-                                .filter(function (dir) dir.exists())
+                get files() this.value.map(path => File(path, modules.io.cwd))
+                                .filter(dir => dir.exists())
             });
 
         options.add(["shell", "sh"],
@@ -1163,4 +1186,4 @@ endModule();
 
 } catch(e){ if (isString(e)) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

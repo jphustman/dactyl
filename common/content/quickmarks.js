@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2013 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -40,7 +40,7 @@ var QuickMarks = Module("quickmarks", {
     find: function find(url) {
         let res = [];
         for (let [k, v] in this._qmarks)
-            if (dactyl.parseURLs(v).some(function (u) String.replace(u, /#.*/, "") == url))
+            if (dactyl.parseURLs(v).some(u => String.replace(u, /#.*/, "") == url))
                 res.push(k);
         return res;
     },
@@ -109,7 +109,7 @@ var QuickMarks = Module("quickmarks", {
 
         if (filter.length > 0) {
             let pattern = util.charListToRegexp(filter, "a-zA-Z0-9");
-            marks = marks.filter(function (qmark) pattern.test(qmark));
+            marks = marks.filter(qmark => pattern.test(qmark));
             dactyl.assert(marks.length >= 0, _("quickmark.noMatching", filter.quote()));
         }
 
@@ -158,7 +158,7 @@ var QuickMarks = Module("quickmarks", {
                             context.title = ["Extra Completions"];
                             context.completions = [
                                 [quickmarks.get(args[0]), _("option.currentValue")]
-                            ].filter(function ([k, v]) k);
+                            ].filter(([k, v]) => k);
                         });
                         context.fork("url", 0, completion, "url");
                     }
@@ -178,7 +178,7 @@ var QuickMarks = Module("quickmarks", {
     completion: function initCompletion() {
         completion.quickmark = function (context) {
             context.title = ["QuickMark", "URL"];
-            context.generate = function () Iterator(quickmarks._qmarks);
+            context.generate = () => Iterator(quickmarks._qmarks);
         };
     },
     mappings: function initMappings() {
@@ -204,4 +204,4 @@ var QuickMarks = Module("quickmarks", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

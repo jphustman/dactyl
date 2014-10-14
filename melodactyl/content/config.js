@@ -47,7 +47,7 @@ const Config = Module("config", ConfigBase, {
                 function () { window.toJavaScriptConsole(); }],
             dominspector: ["DOM Inspector",
                 function () { window.inspectDOMDocument(window.content.document); },
-                function () "inspectDOMDocument" in window],
+                () => "inspectDOMDocument" in window],
             downloads: ["Manage Downloads",
                 function () { window.toOpenWindowByType("Download:Manager", "chrome://mozapps/content/downloads/downloads.xul", "chrome,dialog=no,resizable"); }],
             newsmartplaylist: ["Open the file selector dialog",
@@ -324,4 +324,4 @@ const Config = Module("config", ConfigBase, {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

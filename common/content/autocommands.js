@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -51,7 +51,7 @@ var AutoCmdHive = Class("AutoCmdHive", Contexts.Hive, {
      */
     get: function (event, filter) {
         filter = filter && String(Group.compileFilter(filter));
-        return this._store.filter(function (autoCmd) autoCmd.match(event, filter));
+        return this._store.filter(cmd => cmd.match(event, filter));
     },
 
     /**
@@ -62,7 +62,7 @@ var AutoCmdHive = Class("AutoCmdHive", Contexts.Hive, {
      */
     remove: function (event, filter) {
         filter = filter && String(Group.compileFilter(filter));
-        this._store = this._store.filter(function (autoCmd) !autoCmd.match(event, filter));
+        this._store = this._store.filter(cmd => !cmd.match(event, filter));
     },
 });
 
@@ -70,14 +70,11 @@ var AutoCmdHive = Class("AutoCmdHive", Contexts.Hive, {
  * @instance autocommands
  */
 var AutoCommands = Module("autocommands", {
-    init: function () {
-    },
+    get activeHives() contexts.allGroups.autocmd.filter(h => h._store.length),
 
-    get activeHives() contexts.allGroups.autocmd.filter(function (h) h._store.length),
-
-    add: deprecated("group.autocmd.add", { get: function add() autocommands.user.closure.add }),
-    get: deprecated("group.autocmd.get", { get: function get() autocommands.user.closure.get }),
-    remove: deprecated("group.autocmd.remove", { get: function remove() autocommands.user.closure.remove }),
+    add: deprecated("group.autocmd.add", { get: function add() autocommands.user.bound.add }),
+    get: deprecated("group.autocmd.get", { get: function get() autocommands.user.bound.get }),
+    remove: deprecated("group.autocmd.remove", { get: function remove() autocommands.user.bound.remove }),
 
     /**
      * Lists all autocommands with a matching *event*, *regexp* and optionally
@@ -89,8 +86,7 @@ var AutoCommands = Module("autocommands", {
      * @optional
      */
     list: function (event, regexp, hives) {
-
-        let hives = hives || this.activeHives;
+        hives = hives || this.activeHives;
 
         function cmds(hive) {
             let cmds = {};
@@ -107,22 +103,22 @@ var AutoCommands = Module("autocommands", {
             ["table", {},
                 ["tr", { highlight: "Title" },
                     ["td", { colspan: "3" }, "----- Auto Commands -----"]],
-                hives.map(function (hive) [
+                hives.map(hive => [
                     ["tr", {},
                         ["td", { colspan: "3" },
                             ["span", { highlight: "Title" }, hive.name],
                             " ", hive.filter.toJSONXML(modules)]],
                     ["tr", { style: "height: .5ex;" }],
-                    iter(cmds(hive)).map(function ([event, items]) [
+                    iter(cmds(hive)).map(([event, items]) => [
                         ["tr", { style: "height: .5ex;" }],
-                        items.map(function (item, i)
+                        items.map((item, i) =>
                             ["tr", {},
                                 ["td", { highlight: "Title", style: "padding-left: 1em; padding-right: 1em;" },
                                     i == 0 ? event : ""],
                                 ["td", {}, item.filter.toJSONXML ? item.filter.toJSONXML(modules) : String(item.filter)],
                                 ["td", {}, String(item.command)]]),
                         ["tr", { style: "height: .5ex;" }]]).toArray(),
-                    ["tr", { style: "height: .5ex;" }],
+                    ["tr", { style: "height: .5ex;" }]
                 ])]);
         commandline.commandOutput(table);
     },
@@ -186,14 +182,14 @@ var AutoCommands = Module("autocommands", {
                     validEvents.push("*");
 
                     events = Option.parse.stringlist(event);
-                    dactyl.assert(events.every(function (event) validEvents.indexOf(event.toLowerCase()) >= 0),
+                    dactyl.assert(events.every(e => validEvents.indexOf(e.toLowerCase()) >= 0),
                                   _("autocmd.noGroup", event));
                 }
 
                 if (args.length > 2) { // add new command, possibly removing all others with the same event/pattern
                     if (args.bang)
                         args["-group"].remove(event, filter);
-                    cmd = contexts.bindMacro(args, "-ex", function (params) params);
+                    cmd = contexts.bindMacro(args, "-ex", params => params);
                     args["-group"].add(events, filter, cmd);
                 }
                 else {
@@ -246,7 +242,7 @@ var AutoCommands = Module("autocommands", {
                         return void dactyl.echomsg(_("autocmd.noMatching"));
 
                     let [event, url] = args;
-                    let defaultURL = url || buffer.uri.spec;
+                    let uri = util.createURI(url) || buffer.uri;
                     let validEvents = Object.keys(config.autocommands);
 
                     // TODO: add command validators
@@ -254,7 +250,7 @@ var AutoCommands = Module("autocommands", {
                                   _("autocmd.cantExecuteAll"));
                     dactyl.assert(validEvents.indexOf(event) >= 0,
                                   _("autocmd.noGroup", args));
-                    dactyl.assert(autocommands.get(event).some(function (c) c.patterns.some(function (re) re.test(defaultURL) ^ !re.result)),
+                    dactyl.assert(autocommands.get(event).some(c => c.filter(uri)),
                                   _("autocmd.noMatching"));
 
                     if (this.name == "doautoall" && dactyl.has("tabs")) {
@@ -263,13 +259,13 @@ var AutoCommands = Module("autocommands", {
                         for (let i = 0; i < tabs.count; i++) {
                             tabs.select(i);
                             // if no url arg is specified use the current buffer's URL
-                            autocommands.trigger(event, { url: url || buffer.uri.spec });
+                            autocommands.trigger(event, { url: uri.spec });
                         }
 
                         tabs.select(current);
                     }
                     else
-                        autocommands.trigger(event, { url: defaultURL });
+                        autocommands.trigger(event, { url: uri.spec });
                 }, {
                     argCount: "*", // FIXME: kludged for proper error message should be "1".
                     completer: function (context) completion.autocmdEvent(context),
@@ -283,7 +279,7 @@ var AutoCommands = Module("autocommands", {
         };
     },
     javascript: function initJavascript() {
-        JavaScript.setCompleter(AutoCmdHive.prototype.get, [function () Iterator(config.autocommands)]);
+        JavaScript.setCompleter(AutoCmdHive.prototype.get, [() => Iterator(config.autocommands)]);
     },
     options: function initOptions() {
         options.add(["eventignore", "ei"],
@@ -296,4 +292,4 @@ var AutoCommands = Module("autocommands", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

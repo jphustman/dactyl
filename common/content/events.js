@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -28,7 +28,7 @@ var EventHive = Class("EventHive", Contexts.Hive, {
         else
             [self, events] = [event, event[callback || "events"]];
 
-        if (Set.has(events, "input") && !Set.has(events, "dactyl-input"))
+        if (hasOwnProperty(events, "input") && !hasOwnProperty(events, "dactyl-input"))
             events["dactyl-input"] = events.input;
 
         return [self, events];
@@ -79,7 +79,7 @@ var EventHive = Class("EventHive", Contexts.Hive, {
             let elem = args[0].get();
             if (target == null || elem == target
                                && self == args[1].get()
-                               && Set.has(events, args[2])
+                               && hasOwnProperty(events, args[2])
                                && args[3].wrapped == events[args[2]]
                                && args[4] == capture) {
 
@@ -90,7 +90,7 @@ var EventHive = Class("EventHive", Contexts.Hive, {
         });
     },
 
-    get wrapListener() events.closure.wrapListener
+    get wrapListener() events.bound.wrapListener
 });
 
 /**
@@ -107,9 +107,9 @@ var Events = Module("events", {
                 ["window", { id: document.documentElement.id, xmlns: "xul" },
                     // http://developer.mozilla.org/en/docs/XUL_Tutorial:Updating_Commands
                     ["commandset", { id: "dactyl-onfocus", commandupdater: "true", events: "focus",
-                                     commandupdate: this.closure.onFocusChange }],
+                                     commandupdate: this.bound.onFocusChange }],
                     ["commandset", { id: "dactyl-onselect", commandupdater: "true", events: "select",
-                                     commandupdate: this.closure.onSelectionChange }]]]
+                                     commandupdate: this.bound.onSelectionChange }]]]
         });
 
         this._fullscreen = window.fullScreen;
@@ -140,7 +140,7 @@ var Events = Module("events", {
                         this.active.push(elem);
                 }
 
-                this.active = this.active.filter(function (e) e.popupBoxObject && e.popupBoxObject.popupState != "closed");
+                this.active = this.active.filter(e => e.popupBoxObject && e.popupBoxObject.popupState != "closed");
 
                 if (!this.active.length && !this.activeMenubar)
                     modes.remove(modes.MENU, true);
@@ -188,6 +188,11 @@ var Events = Module("events", {
 
         this.listen(window, this, "events", true);
         this.listen(window, this.popups, "events", true);
+
+        this.grabFocus = 0;
+        this.grabFocusTimer = Timer(100, 10000, () => {
+            this.grabFocus = 0;
+        });
     },
 
     cleanup: function cleanup() {
@@ -206,14 +211,13 @@ var Events = Module("events", {
         }
     },
 
-    get listen() this.builtin.closure.listen,
+    get listen() this.builtin.bound.listen,
     addSessionListener: deprecated("events.listen", { get: function addSessionListener() this.listen }),
 
     /**
      * Wraps an event listener to ensure that errors are reported.
      */
-    wrapListener: function wrapListener(method, self) {
-        self = self || this;
+    wrapListener: function wrapListener(method, self=this) {
         method.wrapper = wrappedListener;
         wrappedListener.wrapped = method;
         function wrappedListener(event) {
@@ -420,11 +424,11 @@ var Events = Module("events", {
         return true;
     },
 
-    canonicalKeys: deprecated("DOM.Event.canonicalKeys", { get: function canonicalKeys() DOM.Event.closure.canonicalKeys }),
+    canonicalKeys: deprecated("DOM.Event.canonicalKeys", { get: function canonicalKeys() DOM.Event.bound.canonicalKeys }),
     create:        deprecated("DOM.Event", function create() DOM.Event.apply(null, arguments)),
     dispatch:      deprecated("DOM.Event.dispatch", function dispatch() DOM.Event.dispatch.apply(DOM.Event, arguments)),
-    fromString:    deprecated("DOM.Event.parse", { get: function fromString() DOM.Event.closure.parse }),
-    iterKeys:      deprecated("DOM.Event.iterKeys", { get: function iterKeys() DOM.Event.closure.iterKeys }),
+    fromString:    deprecated("DOM.Event.parse", { get: function fromString() DOM.Event.bound.parse }),
+    iterKeys:      deprecated("DOM.Event.iterKeys", { get: function iterKeys() DOM.Event.bound.iterKeys }),
 
     toString: function toString() {
         if (!arguments.length)
@@ -465,34 +469,35 @@ var Events = Module("events", {
         let accel = config.OS.isMacOSX ? "metaKey" : "ctrlKey";
 
         let access = iter({ 1: "shiftKey", 2: "ctrlKey", 4: "altKey", 8: "metaKey" })
-                        .filter(function ([k, v]) this & k, prefs.get("ui.key.chromeAccess"))
-                        .map(function ([k, v]) [v, true])
+                        .filter(function ([k, v]) this & k,
+                                prefs.get("ui.key.chromeAccess"))
+                        .map(([k, v]) => [v, true])
                         .toObject();
 
     outer:
         for (let [, key] in iter(elements))
-            if (filters.some(function ([k, v]) key.getAttribute(k) == v)) {
+            if (filters.some(([k, v]) => key.getAttribute(k) == v)) {
                 let keys = { ctrlKey: false, altKey: false, shiftKey: false, metaKey: false };
                 let needed = { ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey };
 
                 let modifiers = (key.getAttribute("modifiers") || "").trim().split(/[\s,]+/);
                 for (let modifier in values(modifiers))
                     switch (modifier) {
-                        case "access": update(keys, access); break;
-                        case "accel":  keys[accel] = true; break;
-                        default:       keys[modifier + "Key"] = true; break;
-                        case "any":
-                            if (!iter.some(keys, function ([k, v]) v && needed[k]))
-                                continue outer;
-                            for (let [k, v] in iter(keys)) {
-                                if (v)
-                                    needed[k] = false;
-                                keys[k] = false;
-                            }
-                            break;
+                    case "access": update(keys, access); break;
+                    case "accel":  keys[accel] = true; break;
+                    default:       keys[modifier + "Key"] = true; break;
+                    case "any":
+                        if (!iter.some(keys, ([k, v]) => v && needed[k]))
+                            continue outer;
+                        for (let [k, v] in iter(keys)) {
+                            if (v)
+                                needed[k] = false;
+                            keys[k] = false;
+                        }
+                        break;
                     }
 
-                if (iter(needed).every(function ([k, v]) v == keys[k]))
+                if (iter(needed).every(([k, v]) => (v == keys[k])))
                     return key;
             }
 
@@ -542,7 +547,8 @@ var Events = Module("events", {
         dactyl.echo(_("macro.loadWaiting"), commandline.FORCE_SINGLELINE);
 
         const maxWaitTime = (time || 25);
-        util.waitFor(function () buffer.loaded, this, maxWaitTime * 1000, true);
+        util.waitFor(() => buffer.loaded, this,
+                     maxWaitTime * 1000, true);
 
         dactyl.echo("", commandline.FORCE_SINGLELINE);
         if (!buffer.loaded)
@@ -570,7 +576,7 @@ var Events = Module("events", {
     events: {
         blur: function onBlur(event) {
             let elem = event.originalTarget;
-            if (DOM(elem).isEditable)
+            if (DOM(elem).editor)
                 util.trapErrors("removeEditActionListener",
                                 DOM(elem).editor, editor);
 
@@ -594,7 +600,7 @@ var Events = Module("events", {
         // TODO: Merge with onFocusChange
         focus: function onFocus(event) {
             let elem = event.originalTarget;
-            if (DOM(elem).isEditable)
+            if (DOM(elem).editor)
                 util.trapErrors("addEditActionListener",
                                 DOM(elem).editor, editor);
 
@@ -611,12 +617,19 @@ var Events = Module("events", {
             if (!(services.focus.getLastFocusMethod(win) & 0x3000)
                 && events.isContentNode(elem)
                 && !buffer.focusAllowed(elem)
-                && isinstance(elem, [HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement, Window])) {
-
-                if (elem.frameElement)
-                    dactyl.focusContent(true);
-                else if (!(elem instanceof Window) || Editor.getEditor(elem))
-                    dactyl.focus(window);
+                && isinstance(elem, [Ci.nsIDOMHTMLInputElement,
+                                     Ci.nsIDOMHTMLSelectElement,
+                                     Ci.nsIDOMHTMLTextAreaElement,
+                                     Ci.nsIDOMWindow])) {
+                if (this.grabFocus++ > 5)
+                    ; // Something is fighting us. Give up.
+                else {
+                    this.grabFocusTimer.tell();
+                    if (elem.frameElement)
+                        dactyl.focusContent(true);
+                    else if (!(elem instanceof Window) || Editor.getEditor(elem))
+                        dactyl.focus(window);
+                }
             }
 
             if (elem instanceof Element)
@@ -656,7 +669,7 @@ var Events = Module("events", {
         // the command-line has focus
         // TODO: ...help me...please...
         keypress: function onKeyPress(event) {
-            event.dactylDefaultPrevented = event.getPreventDefault();
+            event.dactylDefaultPrevented = event.defaultPrevented;
 
             let duringFeed = this.duringFeed || [];
             this.duringFeed = [];
@@ -673,7 +686,7 @@ var Events = Module("events", {
 
                 // Hack to deal with <BS> and so forth not dispatching input
                 // events
-                if (key && event.originalTarget instanceof HTMLInputElement && !modes.main.passthrough) {
+                if (key && event.originalTarget instanceof Ci.nsIDOMHTMLInputElement && !modes.main.passthrough) {
                     let elem = event.originalTarget;
                     elem.dactylKeyPress = elem.value;
                     util.timeout(function () {
@@ -707,7 +720,10 @@ var Events = Module("events", {
                     return Events.kill(event);
                 }
 
-                if (!this.processor) {
+                if (this.processor)
+                    events.dbg("ON KEYPRESS " + key + " processor: " + this.processor,
+                               event.originalTarget instanceof Element ? event.originalTarget : String(event.originalTarget));
+                else {
                     let mode = modes.getStack(0);
                     if (event.dactylMode)
                         mode = Modes.StackElement(event.dactylMode);
@@ -794,8 +810,9 @@ var Events = Module("events", {
                         && let (key = DOM.Event.stringify(event))
                             !(modes.main.count && /^\d$/.test(key) ||
                               modes.main.allBases.some(
-                                function (mode) mappings.hives.some(
-                                    function (hive) hive.get(mode, key) || hive.getCandidates(mode, key))));
+                                mode => mappings.hives
+                                                .some(hive => hive.get(mode, key)
+                                                           || hive.getCandidates(mode, key))));
 
             events.dbg("ON " + event.type.toUpperCase() + " " + DOM.Event.stringify(event) +
                        " passing: " + this.passing + " " +
@@ -844,7 +861,7 @@ var Events = Module("events", {
     // access to the real focus target
     // Huh? --djk
     onFocusChange: util.wrapCallback(function onFocusChange(event) {
-        function hasHTMLDocument(win) win && win.document && win.document instanceof HTMLDocument
+        function hasHTMLDocument(win) win && win.document && win.document instanceof Ci.nsIDOMHTMLDocument
         if (dactyl.ignoreFocus)
             return;
 
@@ -861,28 +878,32 @@ var Events = Module("events", {
             if (elem && elem.readOnly)
                 return;
 
-            if (isinstance(elem, [HTMLEmbedElement, HTMLEmbedElement])) {
+            if (isinstance(elem, [Ci.nsIDOMHTMLEmbedElement, Ci.nsIDOMHTMLEmbedElement])) {
                 if (!modes.main.passthrough && modes.main != modes.EMBED)
                     modes.push(modes.EMBED);
                 return;
             }
 
-            let haveInput = modes.stack.some(function (m) m.main.input);
+            let haveInput = modes.stack.some(m => m.main.input);
 
             if (DOM(elem || win).isEditable) {
-                if (!haveInput)
-                    if (!isinstance(modes.main, [modes.INPUT, modes.TEXT_EDIT, modes.VISUAL]))
-                        if (options["insertmode"])
-                            modes.push(modes.INSERT);
-                        else {
-                            modes.push(modes.TEXT_EDIT);
-                            if (elem.selectionEnd - elem.selectionStart > 0)
-                                modes.push(modes.VISUAL);
-                        }
+                let e = elem || win;
+                if (!(e instanceof Ci.nsIDOMWindow &&
+                        DOM(e.document.activeElement).style.MozUserModify != "read-write")) {
+                    if (!haveInput)
+                        if (!isinstance(modes.main, [modes.INPUT, modes.TEXT_EDIT, modes.VISUAL]))
+                            if (options["insertmode"])
+                                modes.push(modes.INSERT);
+                            else {
+                                modes.push(modes.TEXT_EDIT);
+                                if (elem.selectionEnd - elem.selectionStart > 0)
+                                    modes.push(modes.VISUAL);
+                            }
 
-                if (hasHTMLDocument(win))
-                    buffer.lastInputField = elem || win;
-                return;
+                    if (hasHTMLDocument(win))
+                        buffer.lastInputField = elem || win;
+                    return;
+                }
             }
 
             if (elem && Events.isInputElement(elem)) {
@@ -964,9 +985,10 @@ var Events = Module("events", {
     },
 
     isInputElement: function isInputElement(elem) {
-        return DOM(elem).isEditable ||
-               isinstance(elem, [HTMLEmbedElement, HTMLObjectElement,
-                                 HTMLSelectElement])
+        return elem instanceof Ci.nsIDOMElement && DOM(elem).isEditable ||
+               isinstance(elem, [Ci.nsIDOMHTMLEmbedElement,
+                                 Ci.nsIDOMHTMLObjectElement,
+                                 Ci.nsIDOMHTMLSelectElement]);
     },
 
     kill: function kill(event) {
@@ -1100,7 +1122,7 @@ var Events = Module("events", {
         const Hive = Class("Hive", {
             init: function init(values, map) {
                 this.name = "passkeys:" + map;
-                this.stack = MapHive.Stack(values.map(function (v) Map(v[map + "Keys"])));
+                this.stack = MapHive.Stack(values.map(v => Map(v[map + "Keys"])));
                 function Map(keys) ({
                     execute: function () Events.PASS_THROUGH,
                     keys: keys
@@ -1118,12 +1140,12 @@ var Events = Module("events", {
             "sitemap", "", {
                 flush: function flush() {
                     memoize(this, "filters", function () this.value.filter(function (f) f(buffer.documentURI)));
-                    memoize(this, "pass", function () Set(array.flatten(this.filters.map(function (f) f.keys))));
+                    memoize(this, "pass", function () RealSet(array.flatten(this.filters.map(function (f) f.keys))));
                     memoize(this, "commandHive", function hive() Hive(this.filters, "command"));
                     memoize(this, "inputHive", function hive() Hive(this.filters, "input"));
                 },
 
-                has: function (key) Set.has(this.pass, key) || Set.has(this.commandHive.stack.mappings, key),
+                has: function (key) this.pass.has(key) || hasOwnProperty(this.commandHive.stack.mappings, key),
 
                 get pass() (this.flush(), this.pass),
 
@@ -1131,9 +1153,9 @@ var Events = Module("events", {
                     let value = parse.superapply(this, arguments);
                     value.forEach(function (filter) {
                         let vals = Option.splitList(filter.result);
-                        filter.keys = DOM.Event.parse(vals[0]).map(DOM.Event.closure.stringify);
+                        filter.keys = DOM.Event.parse(vals[0]).map(DOM.Event.bound.stringify);
 
-                        filter.commandKeys = vals.slice(1).map(DOM.Event.closure.canonicalKeys);
+                        filter.commandKeys = vals.slice(1).map(DOM.Event.bound.canonicalKeys);
                         filter.inputKeys = filter.commandKeys.filter(bind("test", /^<[ACM]-/));
                     });
                     return value;
@@ -1168,4 +1190,4 @@ var Events = Module("events", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

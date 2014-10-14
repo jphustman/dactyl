@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -33,10 +33,7 @@ lazyRequire("template", ["template"]);
  * @constructor
  */
 var CompletionContext = Class("CompletionContext", {
-    init: function cc_init(editor, name, offset) {
-        if (!name)
-            name = "";
-
+    init: function cc_init(editor, name="", offset=0) {
         let self = this;
         if (editor instanceof this.constructor) {
             let parent = editor;
@@ -60,15 +57,15 @@ var CompletionContext = Class("CompletionContext", {
              */
             self.parent = parent;
 
-            ["filters", "keys", "process", "title", "quote"].forEach(function fe(key)
-                self[key] = parent[key] && util.cloneObject(parent[key]));
-            ["anchored", "compare", "editor", "_filter", "filterFunc", "forceAnchored", "top"].forEach(function (key)
-                self[key] = parent[key]);
+            ["filters", "keys", "process", "title", "quote"]
+                .forEach(key => self[key] = parent[key] && util.cloneObject(parent[key]));
+            ["anchored", "compare", "editor", "_filter", "filterFunc", "forceAnchored", "top"]
+                .forEach(key => self[key] = parent[key]);
 
             self.__defineGetter__("value", function get_value() this.top.value);
 
             self.offset = parent.offset;
-            self.advance(offset || 0);
+            self.advance(offset);
 
             /**
              * @property {boolean} Specifies that this context is not finished
@@ -135,10 +132,10 @@ var CompletionContext = Class("CompletionContext", {
              *     {@link #filters} array.
              */
             this.filterFunc = function filterFunc(items) {
-                    let self = this;
-                    return this.filters.
-                        reduce(function r(res, filter) res.filter(function f(item) filter.call(self, item)),
-                                items);
+                return this.filters
+                           .reduce((res, filter)
+                                        => res.filter((item) => filter.call(this, item)),
+                                   items);
             };
             /**
              * @property {Array} An array of predicates on which to filter the
@@ -156,7 +153,7 @@ var CompletionContext = Class("CompletionContext", {
              * @property {number} This context's offset from the beginning of
              *     {@link #editor}'s value.
              */
-            this.offset = offset || 0;
+            this.offset = offset;
             /**
              * @property {function} A function which is called when any subcontext
              *     changes its completion list. Only called when
@@ -171,9 +168,9 @@ var CompletionContext = Class("CompletionContext", {
              */
             this.top = this;
             this.__defineGetter__("incomplete", function get_incomplete() this._incomplete
-                || this.contextList.some(function (c) c.parent && c.incomplete));
+                || this.contextList.some(c => c.parent && c.incomplete));
             this.__defineGetter__("waitingForTab", function get_waitingForTab() this._waitingForTab
-                || this.contextList.some(function (c) c.parent && c.waitingForTab));
+                || this.contextList.some(c => c.parent && c.waitingForTab));
             this.__defineSetter__("incomplete", function get_incomplete(val) { this._incomplete = val; });
             this.__defineSetter__("waitingForTab", function get_waitingForTab(val) { this._waitingForTab = val; });
             this.reset();
@@ -214,7 +211,7 @@ var CompletionContext = Class("CompletionContext", {
         return this;
     },
 
-    __title: Class.Memoize(function __title() this._title.map(function (s)
+    __title: Class.Memoize(function __title() this._title.map(s =>
                 typeof s == "string" ? messages.get("completion.title." + s, s)
                                      : s)),
 
@@ -515,7 +512,7 @@ var CompletionContext = Class("CompletionContext", {
                 filtered.sort(this.compare);
                 if (!this.anchored) {
                     let filter = this.filter;
-                    filtered.sort(function s(a, b) (b.text.indexOf(filter) == 0) - (a.text.indexOf(filter) == 0));
+                    filtered.sort(function s(a, b) b.text.startsWith(filter) - a.text.startsWith(filter));
                 }
             }
 
@@ -552,7 +549,7 @@ var CompletionContext = Class("CompletionContext", {
             var substrings = [text];
         }
         else {
-            var compare = function compare(text, s) text.indexOf(s) >= 0;
+            var compare = function compare(text, s) text.contains(s);
             var substrings = [];
             let start = 0;
             let idx;
@@ -674,7 +671,6 @@ var CompletionContext = Class("CompletionContext", {
     },
 
     getRows: function getRows(start, end, doc) {
-        let self = this;
         let items = this.items;
         let cache = this.cache.rows;
         let step = start > end ? -1 : 1;
@@ -706,8 +702,8 @@ var CompletionContext = Class("CompletionContext", {
      *      for the new context. If a string is provided, it is
      *      interpreted as a method to access on *self*.
      */
-    fork: function fork(name, offset, self, completer) {
-        return this.forkapply(name, offset, self, completer, Array.slice(arguments, fork.length));
+    fork: function fork(name, offset, self, completer, ...args) {
+        return this.forkapply(name, offset, self, completer, args);
     },
 
     forkapply: function forkapply(name, offset, self, completer, args) {
@@ -732,14 +728,12 @@ var CompletionContext = Class("CompletionContext", {
         return context;
     },
 
-    split: function split(name, obj, fn) {
-        const self = this;
-
+    split: function split(name, obj, fn, ...args) {
         let context = this.fork(name);
-        function alias(prop) {
-            context.__defineGetter__(prop, function get_() self[prop]);
-            context.__defineSetter__(prop, function set_(val) self[prop] = val);
-        }
+        let alias = (prop) => {
+            context.__defineGetter__(prop, () => this[prop]);
+            context.__defineSetter__(prop, (val) => this[prop] = val);
+        };
         alias("_cache");
         alias("_completions");
         alias("_generate");
@@ -749,7 +743,7 @@ var CompletionContext = Class("CompletionContext", {
         context.hasItems = true;
         this.hasItems = false;
         if (fn)
-            return fn.apply(obj || this, [context].concat(Array.slice(arguments, split.length)));
+            return fn.apply(obj || this, [context].concat(args));
         return context;
     },
 
@@ -821,7 +815,6 @@ var CompletionContext = Class("CompletionContext", {
      * context.
      */
     reset: function reset() {
-        let self = this;
         if (this.parent)
             throw Error();
 
@@ -842,7 +835,7 @@ var CompletionContext = Class("CompletionContext", {
             this.value = this._value;
             this._caret = this.value.length;
         }
-        //for (let key in (k for ([k, v] in Iterator(self.contexts)) if (v.offset > this.caret)))
+        //for (let key in (k for ([k, v] in Iterator(this.contexts)) if (v.offset > this.caret)))
         //    delete this.contexts[key];
         for each (let context in this.contexts) {
             context.hasItems = false;
@@ -850,7 +843,7 @@ var CompletionContext = Class("CompletionContext", {
         }
         this.waitingForTab = false;
         this.runCount++;
-        for each (let context in this.contextList)
+        for (let context of this.contextList)
             context.lastActivated = this.runCount;
         this.contextList = [];
     },
@@ -907,10 +900,10 @@ var Completion = Module("completion", {
         get options() modules.options,
 
         // FIXME
-        _runCompleter: function _runCompleter(name, filter, maxItems) {
+        _runCompleter: function _runCompleter(name, filter, maxItems, ...args) {
             let context = modules.CompletionContext(filter);
             context.maxItems = maxItems;
-            let res = context.fork.apply(context, ["run", 0, this, name].concat(Array.slice(arguments, 3)));
+            let res = context.fork.apply(context, ["run", 0, this, name].concat(args));
             if (res) {
                 if (Components.stack.caller.name === "runCompleter") // FIXME
                     return { items: res.map(function m(i) ({ item: i })) };
@@ -921,14 +914,14 @@ var Completion = Module("completion", {
         },
 
         runCompleter: function runCompleter(name, filter, maxItems) {
-            return this._runCompleter.apply(this, Array.slice(arguments))
+            return this._runCompleter.apply(this, arguments)
                        .items.map(function m(i) i.item);
         },
 
-        listCompleter: function listCompleter(name, filter, maxItems) {
+        listCompleter: function listCompleter(name, filter, maxItems, ...args) {
             let context = modules.CompletionContext(filter || "");
             context.maxItems = maxItems;
-            context.fork.apply(context, ["list", 0, this, name].concat(Array.slice(arguments, 3)));
+            context.fork.apply(context, ["list", 0, this, name].concat(args));
             context = context.contexts["/list"];
             context.wait(null, true);
 
@@ -943,7 +936,7 @@ var Completion = Module("completion", {
                     template.map(contexts, function m(context)
                         [template.completionRow(context.title, "CompTitle"),
                          template.map(context.items, function m(item) context.createRow(item), null, 100)])]);
-        },
+        }
     }),
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -977,7 +970,7 @@ var Completion = Module("completion", {
                 context.generate = function generate_() {
                     return [[k.substr(services.ABOUT.length), ""]
                             for (k in Cc)
-                            if (k.indexOf(services.ABOUT) == 0)];
+                            if (k.startsWith(services.ABOUT))];
                 };
             });
 
@@ -991,10 +984,10 @@ var Completion = Module("completion", {
         }, this);
     },
 
-    addUrlCompleter: function addUrlCompleter(opt) {
-        let completer = Completion.UrlCompleter.apply(null, Array.slice(arguments));
-        completer.args = Array.slice(arguments, completer.length);
-        this.urlCompleters[opt] = completer;
+    addUrlCompleter: function addUrlCompleter(name, description, completer, ...args) {
+        completer = Completion.UrlCompleter(name, description, completer);
+        completer.args = args;
+        this.urlCompleters[name] = completer;
     },
 
     autocomplete: curry(function autocomplete(provider, context) {
@@ -1019,7 +1012,7 @@ var Completion = Module("completion", {
         let words = context.filter.toLowerCase().split(/\s+/g);
         context.hasItems = true;
         context.completions = context.completions.filter(function f({ url, title })
-            words.every(function e(w) (url + " " + title).toLowerCase().indexOf(w) >= 0))
+            words.every(function e(w) (url + " " + title).toLowerCase().indexOf(w) >= 0));
 
         context.format = this.modules.bookmarks.format;
         context.keys.extra = function k_extra(item) {
@@ -1063,7 +1056,7 @@ var Completion = Module("completion", {
         let contains = String.indexOf;
         if (context.ignoreCase) {
             compare = util.compareIgnoreCase;
-            contains = function contains_(a, b) a && a.toLowerCase().indexOf(b.toLowerCase()) > -1;
+            contains = function contains_(a, b) a && a.toLowerCase().contains(b.toLowerCase());
         }
 
         if (tags)
@@ -1187,12 +1180,13 @@ var Completion = Module("completion", {
                                 .concat([let (name = k.substr(services.AUTOCOMPLETE.length))
                                             ["native:" + name, _("autocomplete.description", name)]
                                          for (k in Cc)
-                                         if (k.indexOf(services.AUTOCOMPLETE) == 0)]),
+                                         if (k.startsWith(services.AUTOCOMPLETE))]),
 
                 setter: function setter(values) {
-                    if (values.length == 1 && !Set.has(values[0], this.values)
-                            && Array.every(values[0], Set.has(this.valueMap)))
-                        return Array.map(values[0], function m(v) this[v], this.valueMap);
+                    if (values.length == 1 && !hasOwnProperty(values[0], this.values)
+                            && Array.every(values[0], v => hasOwnProperty(this.valueMap, v)))
+                        return Array.map(values[0], v => this.valueMap[v]);
+
                     return values;
                 },
 
@@ -1229,4 +1223,4 @@ endModule();
 
 // catch(e){ if (!e.stack) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

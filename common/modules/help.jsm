@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -27,7 +27,7 @@ var HelpBuilder = Class("HelpBuilder", {
 
             // Scrape the list of help files from all.xml
             this.tags["all"] = this.tags["all.xml"] = "all";
-            let files = this.findHelpFile("all").map(function (doc)
+            let files = this.findHelpFile("all").map(doc =>
                     [f.value for (f in DOM.XPath("//dactyl:include/@href", doc))]);
 
             // Scrape the tags from the rest of the help files.
@@ -90,8 +90,8 @@ var Help = Module("Help", {
             }
 
         update(services["dactyl:"].providers, {
-            "help": Loop(function (uri, path) help.files[path]),
-            "help-overlay": Loop(function (uri, path) help.overlays[path]),
+            "help": Loop((uri, path) => help.files[path]),
+            "help-overlay": Loop((uri, path) => help.overlays[path]),
             "help-tag": Loop(function (uri, path) {
                 let tag = decodeURIComponent(path);
                 if (tag in help.files)
@@ -108,7 +108,7 @@ var Help = Module("Help", {
                                     { mimeType: "text/plain;charset=UTF-8" })
                            .responseText;
 
-            let re = util.regexp(UTF8(literal(/*
+            let re = util.regexp(UTF8(literal(function () /*
                   ^ (?P<comment> \s* # .*\n)
 
                 | ^ (?P<space> \s*)
@@ -124,18 +124,16 @@ var Help = Module("Help", {
                   )
 
                 | (?: ^ [^\S\n]* \n) +
-            */)), "gmxy");
+            */$)), "gmxy");
 
             let betas = util.regexp(/\[((?:b|rc)\d)\]/, "gx");
 
             let beta = array(betas.iterate(NEWS))
-                        .map(function (m) m[1]).uniq().slice(-1)[0];
-
+                        .map(m => m[1]).uniq().slice(-1)[0];
 
             function rec(text, level, li) {
                 let res = [];
                 let list, space, i = 0;
-
 
                 for (let match in re.iterate(text)) {
                     if (match.comment)
@@ -153,10 +151,10 @@ var Help = Module("Help", {
                     else if (match.par) {
                         let [, par, tags] = /([^]*?)\s*((?:\[[^\]]+\])*)\n*$/.exec(match.par);
                         let t = tags;
-                        tags = array(betas.iterate(tags)).map(function (m) m[1]);
+                        tags = array(betas.iterate(tags)).map(m => m[1]);
 
-                        let group = !tags.length                       ? "" :
-                                    !tags.some(function (t) t == beta) ? "HelpNewsOld" : "HelpNewsNew";
+                        let group = !tags.length               ? "" :
+                                    !tags.some(t => t == beta) ? "HelpNewsOld" : "HelpNewsNew";
                         if (i === 0 && li) {
                             li[1]["dactyl:highlight"] = group;
                             group = "";
@@ -195,7 +193,6 @@ var Help = Module("Help", {
             //     }
             // }
 
-
             return '<?xml version="1.0"?>\n' +
                    '<?xml-stylesheet type="text/xsl" href="dactyl://content/help.xsl"?>\n' +
                    DOM.toXML(["document", { xmlns: "dactyl", name: "versions",
@@ -204,7 +201,7 @@ var Help = Module("Help", {
                        ["toc", { start: "2" }],
 
                        body]);
-        });
+        }, true);
     },
 
     initialize: function initialize() {
@@ -240,7 +237,7 @@ var Help = Module("Help", {
          * @returns {string}
          */
         findHelp: function (topic, consolidated) {
-            if (!consolidated && Set.has(help.files, topic))
+            if (!consolidated && hasOwnProperty(help.files, topic))
                 return topic;
             let items = modules.completion._runCompleter("help", topic, null, !!consolidated).items;
             let partialMatch = null;
@@ -271,7 +268,7 @@ var Help = Module("Help", {
             if (!topic) {
                 let helpFile = consolidated ? "all" : modules.options["helpfile"];
 
-                if (Set.has(help.files, helpFile))
+                if (hasOwnProperty(help.files, helpFile))
                     dactyl.open("dactyl://help/" + helpFile, { from: "help" });
                 else
                     dactyl.echomsg(_("help.noFile", helpFile.quote()));
@@ -290,7 +287,7 @@ var Help = Module("Help", {
             const TIME = Date.now();
 
             if (!FILE.exists() && (/\/$/.test(path) && !/\./.test(FILE.leafName)))
-                FILE.create(FILE.DIRECTORY_TYPE, octal(755));
+                FILE.create(FILE.DIRECTORY_TYPE, 0o755);
 
             dactyl.initHelp();
             if (FILE.isDirectory()) {
@@ -307,10 +304,10 @@ var Help = Module("Help", {
                     addURIEntry(file, "data:text/plain;charset=UTF-8," + encodeURI(data));
             }
 
-            let empty = Set("area base basefont br col frame hr img input isindex link meta param"
+            let empty = RealSet("area base basefont br col frame hr img input isindex link meta param"
                                 .split(" "));
             function fix(node) {
-                switch(node.nodeType) {
+                switch (node.nodeType) {
                 case Ci.nsIDOMNode.ELEMENT_NODE:
                     if (isinstance(node, [Ci.nsIDOMHTMLBaseElement]))
                         return;
@@ -322,13 +319,13 @@ var Help = Module("Help", {
 
                     for (let { name, value } in array.iterValues(node.attributes)) {
                         if (name == "dactyl:highlight") {
-                            Set.add(styles, value);
+                            styles.add(value);
                             name = "class";
                             value = "hl-" + value;
                         }
                         if (name == "href") {
                             value = node.href || value;
-                            if (value.indexOf("dactyl://help-tag/") == 0) {
+                            if (value.startsWith("dactyl://help-tag/")) {
                                 try {
                                     let uri = services.io.newChannel(value, null, null).originalURI;
                                     value = uri.spec == value ? "javascript:;" : uri.path.substr(1);
@@ -348,7 +345,7 @@ var Help = Module("Help", {
 
                         data.push(" ", name, '="', DOM.escapeHTML(value), '"');
                     }
-                    if (node.localName in empty)
+                    if (empty.has(node.localName))
                         data.push(" />");
                     else {
                         data.push(">");
@@ -365,13 +362,13 @@ var Help = Module("Help", {
 
             let { buffer, content, events } = modules;
             let chromeFiles = {};
-            let styles = {};
+            let styles = RealSet();
 
             for (let [file, ] in Iterator(help.files)) {
                 let url = "dactyl://help/" + file;
                 dactyl.open(url);
-                util.waitFor(function () content.location.href == url && buffer.loaded
-                                && content.document.documentElement instanceof Ci.nsIDOMHTMLHtmlElement,
+                util.waitFor(() => (content.location.href == url && buffer.loaded &&
+                                    content.document.documentElement instanceof Ci.nsIDOMHTMLHtmlElement),
                              15000);
                 events.waitForPageLoad();
                 var data = [
@@ -383,10 +380,10 @@ var Help = Module("Help", {
                 addDataEntry(file + ".xhtml", data.join(""));
             }
 
-            let data = [h for (h in highlight) if (Set.has(styles, h.class) || /^Help/.test(h.class))]
-                .map(function (h) h.selector
-                                   .replace(/^\[.*?=(.*?)\]/, ".hl-$1")
-                                   .replace(/html\|/g, "") + "\t" + "{" + h.cssText + "}")
+            data = [h for (h in highlight) if (styles.has(h.class) || /^Help/.test(h.class))]
+                .map(h => h.selector
+                           .replace(/^\[.*?=(.*?)\]/, ".hl-$1")
+                           .replace(/html\|/g, "") + "\t" + "{" + h.cssText + "}")
                 .join("\n");
             addDataEntry("help.css", data.replace(/chrome:[^ ")]+\//g, ""));
 
@@ -411,7 +408,7 @@ var Help = Module("Help", {
 
         [
             {
-                name: "h[elp]",
+                name: ["h[elp]", "halp"],
                 description: "Open the introductory help page"
             }, {
                 name: "helpa[ll]",
@@ -447,10 +444,17 @@ var Help = Module("Help", {
     },
     javascript: function initJavascript(dactyl, modules, window) {
         modules.JavaScript.setCompleter([modules.help.exportHelp],
-            [function (context, args) overlay.activeModules.completion.file(context)]);
+            [(context, args) => overlay.activeModules.completion.file(context)]);
+    },
+    options: function initOptions(dactyl, modules, window) {
+        const { options } = modules;
+
+        options.add(["helpfile", "hf"],
+            "Name of the main help file",
+            "string", "intro");
     }
 });
 
 endModule();
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

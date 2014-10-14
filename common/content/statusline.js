@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -12,29 +12,54 @@ var StatusLine = Module("statusline", {
     init: function init() {
         this._statusLine = document.getElementById("status-bar");
         this.statusBar = document.getElementById("addon-bar") || this._statusLine;
+
         this.baseGroup = this.statusBar == this._statusLine ? "StatusLine " : "";
 
+        if (this.statusBar.localName == "toolbar" &&
+            this.statusBar.parentNode.id != "browser-bottombox")
+            overlay.overlayWindow(window, {
+                objects: this,
+                append: [
+                    ["vbox", { id: "browser-bottombox", xmlns: "xul" },
+                        ["toolbar", { id: "dactyl-addon-bar",
+                                      customizable: true,
+                                      defaultset: "",
+                                      toolboxid: "navigator-toolbox",
+                                      toolbarname: /*L*/ "Add-on Bar",
+                                      class: "toolbar-primary chromeclass-toolbar",
+                                      mode: "icons",
+                                      iconsize: "small", defaulticonsize: "small",
+                                      key: "statusBar" },
+                            ["statusbar", { id: "dactyl-status-bar", key: "_statusLine" }]]]
+                ]
+            });
+
+        config.tabbrowser.getStatusPanel().hidden = true;
+
         if (this.statusBar.localName == "toolbar") {
-            styles.system.add("addon-bar", config.styleableChrome, literal(/*
-                #status-bar { margin-top: 0 !important; }
-                #addon-bar > statusbar { -moz-box-flex: 1 }
-                #addon-bar > #addonbar-closebutton { visibility: collapse; }
-                #addon-bar > xul|toolbarspring { visibility: collapse; }
-            */));
+            styles.system.add("addon-bar", config.styleableChrome, literal(function () /*
+                #status-bar, #dactyl-status-bar { margin-top: 0 !important; }
+                #dactyl-status-bar { min-height: 0 !important; }
+                :-moz-any(#addon-bar, #dactyl-addon-bar) > statusbar { -moz-box-flex: 1 }
+                :-moz-any(#addon-bar, #dactyl-addon-bar) > xul|toolbarspring { visibility: collapse; }
+                #browser-bottombox>#addon-bar > #addonbar-closebutton { visibility: collapse; }
+            */$));
 
             overlay.overlayWindow(window, {
                 append: [
-                    ["statusbar", { id: "status-bar", ordinal: "0" }]]
+                    ["statusbar", { id: this._statusLine.id, ordinal: "0" }]]
             });
 
-            highlight.loadCSS(util.compileMacro(literal(/*
-                !AddonBar;#addon-bar {
+            highlight.loadCSS(util.compileMacro(literal(function () /*
+                !AddonBar;#browser-bottombox>#addon-bar,#dactyl-addon-bar {
                     padding-left: 0 !important;
+                    padding-top: 0 !important;
+                    padding-bottom: 0 !important;
                     min-height: 18px !important;
                     -moz-appearance: none !important;
                     <padding>
                 }
-                !AddonButton;#addon-bar xul|toolbarbutton {
+                !AddonButton;#browser-bottombox>#addon-bar xul|toolbarbutton, #dactyl-addon-bar xul|toolbarbutton {
                     -moz-appearance: none !important;
                     padding: 0 !important;
                     border-width: 0px !important;
@@ -42,19 +67,19 @@ var StatusLine = Module("statusline", {
                     color: inherit !important;
                 }
                 AddonButton:not(:hover)  background: transparent;
-            */))({ padding: config.OS.isMacOSX ? "padding-right: 10px !important;" : "" }));
+            */$))({ padding: config.OS.isMacOSX ? "padding-right: 10px !important;" : "" }));
 
             if (document.getElementById("appmenu-button"))
-                highlight.loadCSS(literal(/*
+                highlight.loadCSS(literal(function () /*
                     AppmenuButton       min-width: 0 !important; padding: 0 .5em !important;
-                */));
+                */$));
         }
 
         let _commandline = "if (window.dactyl) return dactyl.modules.commandline";
         let prepend = [
             ["button", { id: "appmenu-button", label: "", image: "chrome://branding/content/icon16.png", highlight: "AppmenuButton", xmlns: "xul" }],
             ["toolbarbutton", { id: "appmenu-toolbar-button", label: "", image: "chrome://branding/content/icon16.png" }],
-            ["statusbar", { id: "status-bar", highlight: "StatusLine", xmlns: "xul" },
+            ["statusbar", { id: this._statusLine.id, highlight: "StatusLine", xmlns: "xul" },
                 // <!-- insertbefore="dactyl.statusBefore;" insertafter="dactyl.statusAfter;" -->
                 ["hbox", { key: "container", hidden: "false", align: "center",  flex: "1" },
                     ["stack", { orient: "horizontal",       align: "stretch", flex: "1", highlight: "CmdLine StatusCmdLine", class: "dactyl-container" },
@@ -63,8 +88,10 @@ var StatusLine = Module("statusline", {
                             ["stack", {  id: "dactyl-statusline-stack",       flex: "1", highlight: "CmdLine StatusCmdLine", class: "dactyl-container" },
                                 ["textbox", { key: "url",     crop: "end",    flex: "1", style: "background: transparent;",  class: "plain dactyl-status-field-url",
                                               readonly: "true" }],
-                                ["textbox", { key: "message", crop: "end",    flex: "1", highlight: "Normal StatusNormal",   class: "plain",
-                                              readonly: "true" }]]]],
+                                ["hbox", { key: "message-box" },
+                                    ["label", { key: "message-pre", highlight: "WarningMsg StatusWarningMsg", class: "plain", readonly: "true" }],
+                                    ["textbox", { key: "message", crop: "end",    flex: "1", highlight: "Normal StatusNormal",   class: "plain",
+                                                  readonly: "true" }]]]]],
                     ["label", { class: "plain", key: "inputbuffer",    flex: "0" }],
                     ["label", { class: "plain", key: "progress",       flex: "0" }],
                     ["label", { class: "plain", key: "tabcount",       flex: "0" }],
@@ -92,6 +119,11 @@ var StatusLine = Module("statusline", {
             this.security = content.document.dactylSecurity || "insecure";
         }
         catch (e) {}
+    },
+
+    cleanup: function cleanup(reason) {
+        if (reason != "unload" && "CustomizableUI" in window)
+            CustomizableUI.unregisterArea(this.statusBar.id, false);
     },
 
     get visible() !this.statusBar.collapsed && !this.statusBar.hidden,
@@ -158,6 +190,16 @@ var StatusLine = Module("statusline", {
             this.timeout(function () {
                 this.status = message || buffer.uri;
             });
+        },
+        "fullscreen": function onFullscreen(fullscreen) {
+            let go = options.get("guioptions");
+            if (fullscreen) {
+                this.wasVisible = go.has("s");
+                go.op("-", "s");
+            }
+            else if (this.wasVisible) {
+                go.op("+", "s");
+            }
         }
     },
 
@@ -233,7 +275,7 @@ var StatusLine = Module("statusline", {
                 url = _("buffer.noName");
         }
         else {
-            url = url.replace(RegExp("^dactyl://help/(\\S+)#(.*)"), function (m, n1, n2) n1 + " " + decodeURIComponent(n2) + " " + _("buffer.help"))
+            url = url.replace(RegExp("^dactyl://help/(\\S+)#(.*)"), (m, n1, n2) => n1 + " " + decodeURIComponent(n2) + " " + _("buffer.help"))
                      .replace(RegExp("^dactyl://help/(\\S+)"), "$1 " + _("buffer.help"));
         }
 
@@ -257,7 +299,7 @@ var StatusLine = Module("statusline", {
         });
     },
 
-    updateUrl: deprecated("statusline.status", function updateUrl(url) { this.status = url || buffer.uri }),
+    updateUrl: deprecated("statusline.status", function updateUrl(url) { this.status = url || buffer.uri; }),
 
     /**
      * Set the contents of the status line's input buffer to the given
@@ -318,7 +360,7 @@ var StatusLine = Module("statusline", {
     updateTabCount: function updateTabCount(delayed) {
         if (dactyl.has("tabs")) {
             if (delayed) {
-                this.timeout(function () this.updateTabCount(false), 0);
+                this.timeout(() => { this.updateTabCount(false); }, 0);
                 return;
             }
 
@@ -365,10 +407,7 @@ var StatusLine = Module("statusline", {
      * @param {number} percent The zoom level, as a percentage. @optional
      * @param {boolean} full True if full zoom is in operation. @optional
      */
-    updateZoomLevel: function updateZoomLevel(percent, full) {
-        if (arguments.length == 0)
-            [percent, full] = [buffer.zoomLevel, buffer.fullZoom];
-
+    updateZoomLevel: function updateZoomLevel(percent=buffer.zoomLevel, full=buffer.fullZoom) {
         if (percent == 100)
             this.widgets.zoomlevel.value = "";
         else {
@@ -381,4 +420,4 @@ var StatusLine = Module("statusline", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

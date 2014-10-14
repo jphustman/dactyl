@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -30,15 +30,13 @@ var Marks = Module("marks", {
      */
     get all() iter(this._localMarks.get(this.localURI) || {},
                    this._urlMarks
-                  ).sort(function (a, b) String.localeCompare(a[0], b[0])),
+                  ).sort((a, b) => String.localeCompare(a[0], b[0])),
 
     get localURI() buffer.focusedFrame.document.documentURI.replace(/#.*/, ""),
 
-    Mark: function Mark(params) {
+    Mark: function Mark(params={}) {
         let win = buffer.focusedFrame;
         let doc = win.document;
-
-        params = params || {};
 
         params.location = doc.documentURI.replace(/#.*/, ""),
         params.offset = buffer.scrollPosition;
@@ -65,7 +63,8 @@ var Marks = Module("marks", {
         let mark = this.Mark();
 
         if (Marks.isURLMark(name)) {
-            mark.tab = util.weakReference(tabs.getTab());
+            // FIXME: Disabled due to cross-compartment magic.
+            // mark.tab = util.weakReference(tabs.getTab());
             this._urlMarks.set(name, mark);
             var message = "mark.addURL";
         }
@@ -137,7 +136,7 @@ var Marks = Module("marks", {
         let store = buffer.localStore;
         return {
             index: store.jumpsIndex,
-            locations: store.jumps.map(function (j) j.mark)
+            locations: store.jumps.map(j => j.mark)
         };
     },
 
@@ -233,7 +232,7 @@ var Marks = Module("marks", {
 
     _scrollTo: function _scrollTo(mark) {
         if (!mark.path)
-            var node = buffer.findScrollable(0, (mark.offset || mark.position).x)
+            var node = buffer.findScrollable(0, (mark.offset || mark.position).x);
         else
             for (node in DOM.XPath(mark.path, buffer.focusedFrame.document))
                 break;
@@ -260,7 +259,7 @@ var Marks = Module("marks", {
 
         if (filter.length > 0) {
             let pattern = util.charListToRegexp(filter, "a-zA-Z");
-            marks = marks.filter(function ([k, ]) pattern.test(k));
+            marks = marks.filter(([k]) => (pattern.test(k)));
             dactyl.assert(marks.length > 0, _("mark.noMatching", filter.quote()));
         }
 
@@ -303,7 +302,6 @@ var Marks = Module("marks", {
                           Math.round(mark.position.y * 100) + "%)",
                     (tab && "tab: " + tabs.index(tab))
             ].filter(util.identity).join(", ");
-
     },
 
     isLocalMark: bind("test", /^[a-z`']$/),
@@ -313,7 +311,7 @@ var Marks = Module("marks", {
     events: function () {
         let appContent = document.getElementById("appcontent");
         if (appContent)
-            events.listen(appContent, "load", marks.closure._onPageLoad, true);
+            events.listen(appContent, "load", marks.bound._onPageLoad, true);
     },
     mappings: function () {
         var myModes = config.browserModes;
@@ -377,9 +375,9 @@ var Marks = Module("marks", {
             function percent(i) Math.round(i * 100);
 
             context.title = ["Mark", "HPos VPos File"];
-            context.keys.description = function ([, m]) (m.offset ? Math.round(m.offset.x) + " " + Math.round(m.offset.y)
-                                                                  : percent(m.position.x) + "% " + percent(m.position.y) + "%"
-                                                        ) + " " + m.location;
+            context.keys.description = ([, m]) => (m.offset ? Math.round(m.offset.x) + " " + Math.round(m.offset.y)
+                                                            : percent(m.position.x) + "% " + percent(m.position.y) + "%"
+                                                  ) + " " + m.location;
             context.completions = marks.all;
         };
     },
@@ -408,4 +406,4 @@ var Marks = Module("marks", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

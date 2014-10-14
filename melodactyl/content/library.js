@@ -36,7 +36,7 @@ const Library = Module("library", {
      */
     getAlbums: function getAlbums(artist) {
         let albums = this._toJSArray(this.MAIN_LIBRARY.getItemsByProperty(SBProperties.artistName, artist))
-                         .map(function (track) track.getProperty(SBProperties.albumName));
+                         .map(track => track.getProperty(SBProperties.albumName));
         return array.uniq(albums);
     },
 
@@ -55,10 +55,10 @@ const Library = Module("library", {
         properties.appendProperty(SBProperties.albumName, album);
 
         return this._toJSArray(this.MAIN_LIBRARY.getItemsByProperties(properties))
-                   .map(function (track) track.getProperty(SBProperties.trackName));
+                   .map(track => track.getProperty(SBProperties.trackName));
     }
 }, {
 }, {
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
-// Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2007-2011 Doug Kearns <dougkearns@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -10,7 +10,7 @@ try {
 
 defineModule("util", {
     exports: ["DOM", "$", "FailedAssertion", "Math", "NS", "Point", "Util", "XBL", "XHTML", "XUL", "util"],
-    require: ["dom", "services"]
+    require: ["dom", "promises", "services"]
 });
 
 lazyRequire("overlay", ["overlay"]);
@@ -72,8 +72,8 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
     },
 
     activeWindow: deprecated("overlay.activeWindow", { get: function activeWindow() overlay.activeWindow }),
-    overlayObject: deprecated("overlay.overlayObject", { get: function overlayObject() overlay.closure.overlayObject }),
-    overlayWindow: deprecated("overlay.overlayWindow", { get: function overlayWindow() overlay.closure.overlayWindow }),
+    overlayObject: deprecated("overlay.overlayObject", { get: function overlayObject() overlay.bound.overlayObject }),
+    overlayWindow: deprecated("overlay.overlayWindow", { get: function overlayWindow() overlay.bound.overlayWindow }),
 
     compileMatcher: deprecated("DOM.compileMatcher", { get: function compileMatcher() DOM.compileMatcher }),
     computedStyle: deprecated("DOM#style", function computedStyle(elem) DOM(elem).style),
@@ -89,14 +89,13 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
     parseForm: deprecated("DOM#formData", function parseForm(elem) values(DOM(elem).formData).toArray()),
     scrollIntoView: deprecated("DOM#scrollIntoView", function scrollIntoView(elem, alignWithTop) DOM(elem).scrollIntoView(alignWithTop)),
     validateMatcher: deprecated("DOM.validateMatcher", { get: function validateMatcher() DOM.validateMatcher }),
-    xmlToDom: deprecated("DOM.fromJSON", function xmlToDom() DOM.fromXML.apply(DOM, arguments)),
 
     map: deprecated("iter.map", function map(obj, fn, self) iter(obj).map(fn, self).toArray()),
     writeToClipboard: deprecated("dactyl.clipboardWrite", function writeToClipboard(str, verbose) util.dactyl.clipboardWrite(str, verbose)),
     readFromClipboard: deprecated("dactyl.clipboardRead", function readFromClipboard() util.dactyl.clipboardRead(false)),
 
     chromePackages: deprecated("config.chromePackages", { get: function chromePackages() config.chromePackages }),
-    haveGecko: deprecated("config.haveGecko", { get: function haveGecko() config.closure.haveGecko }),
+    haveGecko: deprecated("config.haveGecko", { get: function haveGecko() config.bound.haveGecko }),
     OS: deprecated("config.OS", { get: function OS() config.OS }),
 
     dactyl: update(function dactyl(obj) {
@@ -138,7 +137,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         let cleanup = ["dactyl-cleanup-modules", "quit-application"];
 
         function register(meth) {
-            for (let target in Set(cleanup.concat(Object.keys(obj.observers))))
+            for (let target of RealSet(cleanup.concat(Object.keys(obj.observers))))
                 try {
                     services.observer[meth](obj, target, true);
                 }
@@ -161,7 +160,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                 }
             });
 
-        obj.observe.unregister = function () register("removeObserver");
+        obj.observe.unregister = () => register("removeObserver");
         register("addObserver");
     }, { dump: dump, Error: Error }),
 
@@ -185,7 +184,8 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * @param {string} name The name to mangle.
      * @returns {string} The mangled name.
      */
-    camelCase: function camelCase(name) String.replace(name, /-(.)/g, function (m, m1) m1.toUpperCase()),
+    camelCase: function camelCase(name) String.replace(name, /-(.)/g,
+                                                       (m, m1) => m1.toUpperCase()),
 
     /**
      * Capitalizes the first character of the given string.
@@ -261,12 +261,14 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
 
         function frame() update(
             function _frame(obj)
-                _frame === stack.top || _frame.valid(obj) ?
-                    _frame.elements.map(function (e) callable(e) ? e(obj) : e).join("") : "",
+                _frame === stack.top || _frame.valid(obj)
+                    ? _frame.elements.map(e => callable(e) ? e(obj) : e)
+                                     .join("")
+                    : "",
             {
                 elements: [],
                 seen: {},
-                valid: function valid(obj) this.elements.every(function (e) !e.test || e.test(obj))
+                valid: function valid(obj) this.elements.every(e => !e.test || e.test(obj))
             });
 
         let end = 0;
@@ -295,7 +297,8 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                 char = char.toLowerCase();
 
                 stack.top.elements.push(update(
-                    function (obj) obj[char] != null ? quote(obj, char) : "",
+                    function (obj) obj[char] != null ? quote(obj, char)
+                                                     : "",
                     { test: function test(obj) obj[char] != null }));
 
                 for (let elem in array.iterValues(stack))
@@ -340,28 +343,30 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
 
         let unknown = util.identity;
         if (!keepUnknown)
-            unknown = function () "";
+            unknown = () => "";
 
         function frame() update(
             function _frame(obj)
-                _frame === stack.top || _frame.valid(obj) ?
-                    _frame.elements.map(function (e) callable(e) ? e(obj) : e).join("") : "",
+                _frame === stack.top || _frame.valid(obj)
+                    ? _frame.elements.map(e => callable(e) ? e(obj) : e)
+                            .join("")
+                    : "",
             {
                 elements: [],
-                seen: {},
-                valid: function valid(obj) this.elements.every(function (e) !e.test || e.test(obj))
+                seen: RealSet(),
+                valid: function valid(obj) this.elements.every(e => (!e.test || e.test(obj)))
             });
 
         let defaults = { lt: "<", gt: ">" };
 
-        let re = util.regexp(literal(/*
+        let re = util.regexp(literal(function () /*
             ([^]*?) // 1
             (?:
                 (<\{) | // 2
                 (< ((?:[a-z]-)?[a-z-]+?) (?:\[([0-9]+)\])? >) | // 3 4 5
                 (\}>) // 6
             )
-        */), "gixy");
+        */$), "gixy");
         macro = String(macro);
         let end = 0;
         for (let match in re.iterate(macro)) {
@@ -381,23 +386,23 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
             }
             else {
                 let [, flags, name] = /^((?:[a-z]-)*)(.*)/.exec(macro);
-                flags = Set(flags);
+                flags = RealSet(flags);
 
                 let quote = util.identity;
-                if (flags.q)
+                if (flags.has("q"))
                     quote = function quote(obj) typeof obj === "number" ? obj : String.quote(obj);
-                if (flags.e)
+                if (flags.has("e"))
                     quote = function quote(obj) "";
 
-                if (Set.has(defaults, name))
+                if (hasOwnProperty(defaults, name))
                     stack.top.elements.push(quote(defaults[name]));
                 else {
                     let index = idx;
                     if (idx) {
                         idx = Number(idx) - 1;
                         stack.top.elements.push(update(
-                            function (obj) obj[name] != null && idx in obj[name] ? quote(obj[name][idx])
-                                                                                 : Set.has(obj, name) ? "" : unknown(full),
+                            obj => obj[name] != null && idx in obj[name] ? quote(obj[name][idx])
+                                                                         : hasOwnProperty(obj, name) ? "" : unknown(full),
                             {
                                 test: function test(obj) obj[name] != null && idx in obj[name]
                                                       && obj[name][idx] !== false
@@ -406,8 +411,8 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                     }
                     else {
                         stack.top.elements.push(update(
-                            function (obj) obj[name] != null ? quote(obj[name])
-                                                             : Set.has(obj, name) ? "" : unknown(full),
+                            obj => obj[name] != null ? quote(obj[name])
+                                                     : hasOwnProperty(obj, name) ? "" : unknown(full),
                             {
                                 test: function test(obj) obj[name] != null
                                                       && obj[name] !== false
@@ -416,7 +421,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                     }
 
                     for (let elem in array.iterValues(stack))
-                        elem.seen[name] = true;
+                        elem.seen.add(name);
                 }
             }
         }
@@ -467,7 +472,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                             acc.push(vals);
 
                         if (acc.length == pattern.length)
-                            this.res.push(acc.join(""))
+                            this.res.push(acc.join(""));
                         else
                             for (let val in values(vals))
                                 this.rec(acc.concat(val));
@@ -477,7 +482,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                 return obj.res;
             }
 
-            if (pattern.indexOf("{") == -1)
+            if (!pattern.contains("{"))
                 return [pattern];
 
             let res = [];
@@ -491,8 +496,8 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                         fn(match);
                 }
                 res.push(pattern.substr(end));
-                return res.map(function (s) util.dequote(s, dequote));
-            }
+                return res.map(s => util.dequote(s, dequote));
+            };
 
             let patterns = [];
             let substrings = split(pattern, /((?:[^\\{]|\\.)*)\{((?:[^\\}]|\\.)*)\}/gy,
@@ -507,11 +512,11 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                 else
                     for (let [, pattern] in Iterator(patterns[acc.length]))
                         rec(acc.concat(pattern));
-            }
+            };
             rec([]);
             return res;
         }
-        catch (e if e.message && ~e.message.indexOf("res is undefined")) {
+        catch (e if e.message && e.message.contains("res is undefined")) {
             // prefs.safeSet() would be reset on :rehash
             prefs.set("javascript.options.methodjit.chrome", false);
             util.dactyl.warn(_(UTF8("error.damnYouJägermonkey")));
@@ -539,7 +544,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * @returns {string}
      */
     dequote: function dequote(pattern, chars)
-        pattern.replace(/\\(.)/, function (m0, m1) chars.indexOf(m1) >= 0 ? m1 : m0),
+        pattern.replace(/\\(.)/, (m0, m1) => chars.contains(m1) ? m1 : m0),
 
     /**
      * Returns the nsIDocShell for the given window.
@@ -582,10 +587,10 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * @param {string} msg The trace message.
      * @param {number} frames The number of frames to print.
      */
-    dumpStack: function dumpStack(msg, frames) {
+    dumpStack: function dumpStack(msg="Stack", frames=null) {
         let stack = util.stackLines(Error().stack);
         stack = stack.slice(1, 1 + (frames || stack.length)).join("\n").replace(/^/gm, "    ");
-        util.dump((arguments.length == 0 ? "Stack" : msg) + "\n" + stack + "\n");
+        util.dump(msg + "\n" + stack + "\n");
     },
 
     /**
@@ -659,7 +664,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         [hours, minutes]   = div(minutes, 60);
         [days, hours]      = div(hours,   24);
         if (days)
-            return /*L*/days + " days " + hours + " hours"
+            return /*L*/days + " days " + hours + " hours";
         if (hours)
             return /*L*/hours + "h " + minutes + "m";
         if (minutes)
@@ -744,21 +749,20 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      *
      * @returns {XMLHttpRequest}
      */
-    httpGet: function httpGet(url, callback, self) {
-        let params = callback;
-        if (!isObject(params))
-            params = { callback: params && function () callback.apply(self, arguments) };
+    httpGet: function httpGet(url, params={}, self=null) {
+        if (callable(params))
+            // Deprecated.
+            params = { callback: params.bind(self) };
 
         try {
             let xmlhttp = services.Xmlhttp();
-            xmlhttp.mozBackgroundRequest = Set.has(params, "background") ? params.background : true;
+            xmlhttp.mozBackgroundRequest = hasOwnProperty(params, "background") ? params.background : true;
 
             let async = params.callback || params.onload || params.onerror;
             if (async) {
-                xmlhttp.addEventListener("load",  function handler(event) { util.trapErrors(params.onload  || params.callback, params, xmlhttp, event) }, false);
-                xmlhttp.addEventListener("error", function handler(event) { util.trapErrors(params.onerror || params.callback, params, xmlhttp, event) }, false);
+                xmlhttp.addEventListener("load",  event => { util.trapErrors(params.onload  || params.callback, params, xmlhttp, event); }, false);
+                xmlhttp.addEventListener("error", event => { util.trapErrors(params.onerror || params.callback, params, xmlhttp, event); }, false);
             }
-
 
             if (isObject(params.params)) {
                 let data = [encodeURIComponent(k) + "=" + encodeURIComponent(v)
@@ -804,6 +808,22 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
             return null;
         }
     },
+
+    /**
+     * Like #httpGet, but returns a promise rather than accepting
+     * callbacks.
+     *
+     * @param {string} url The URL to fetch.
+     * @param {object} params Parameter object, as in #httpGet.
+     */
+    fetchUrl: promises.withCallbacks(function fetchUrl([accept, reject, deferred], url, params) {
+        params = update({}, params);
+        params.onload = accept;
+        params.onerror = reject;
+
+        let req = this.httpGet(url, params);
+        promises.oncancel(deferred, req.cancel);
+    }),
 
     /**
      * The identity function.
@@ -869,26 +889,26 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * top-level window and sub-frames thereof.
      */
     iterDocuments: function iterDocuments(types) {
-        types = types ? types.map(function (s) "type" + util.capitalize(s))
+        types = types ? types.map(s => "type" + util.capitalize(s))
                       : ["typeChrome", "typeContent"];
 
         let windows = services.windowMediator.getXULWindowEnumerator(null);
         while (windows.hasMoreElements()) {
             let window = windows.getNext().QueryInterface(Ci.nsIXULWindow);
-            for each (let type in types) {
+            for (let type of types) {
                 let docShells = window.docShell.getDocShellEnumerator(Ci.nsIDocShellTreeItem[type],
                                                                       Ci.nsIDocShell.ENUMERATE_FORWARDS);
                 while (docShells.hasMoreElements())
                     let (viewer = docShells.getNext().QueryInterface(Ci.nsIDocShell).contentViewer) {
                         if (viewer)
                             yield viewer.DOMDocument;
-                    }
+                    };
             }
         }
     },
 
     // ripped from Firefox; modified
-    unsafeURI: Class.Memoize(function () util.regexp(String.replace(literal(/*
+    unsafeURI: Class.Memoize(() => util.regexp(String.replace(literal(function () /*
             [
                 \s
                 // Invisible characters (bug 452979)
@@ -902,7 +922,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                 // Bidi formatting characters. (RFC 3987 sections 3.2 and 4.1 paragraph 6)
                 U200E U200F U202A U202B U202C U202D U202E
             ]
-        */), /U/g, "\\u"),
+        */$), /U/g, "\\u"),
         "gx")),
     losslessDecodeURI: function losslessDecodeURI(url) {
         return url.split("%25").map(function (url) {
@@ -934,10 +954,10 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                                                  : val,
                                      isDOM ? /['%]/g
                                            : /['"%&<>]/g,
-                                     function (m) map[m]);
+                                     m => map[m]);
             }
 
-            return iter(obj).map(function ([k, v])
+            return iter(obj).map(([k, v]) =>
                                  ["<!ENTITY ", k, " '", escape(v), "'>"].join(""))
                             .join("\n");
         },
@@ -1000,7 +1020,9 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
 
         if (color) {
             obj = template.highlightFilter(util.clip(obj, 150), "\n",
-                                           function () ["span", { highlight: "NonText" }, "^J"]);
+                                           () => ["span", { highlight: "NonText" },
+                                                      "^J"]);
+
             var head = ["span", { highlight: "Title Object" }, obj, "::\n"];
         }
         else
@@ -1011,13 +1033,19 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         // window.content often does not want to be queried with "var i in object"
         try {
             let hasValue = !("__iterator__" in object || isinstance(object, ["Generator", "Iterator"]));
+
             if (object.dactyl && object.modules && object.modules.modules == object.modules) {
                 object = Iterator(object);
                 hasValue = false;
             }
+
             let keyIter = object;
-            if ("__iterator__" in object && !callable(object.__iterator__))
-                keyIter = keys(object)
+            if (iter.iteratorProp in object) {
+                keyIter = (k for (k of object));
+                hasValue = false;
+            }
+            else if ("__iterator__" in object && !callable(object.__iterator__))
+                keyIter = keys(object);
 
             for (let i in keyIter) {
                 let value = Magic("<no value>");
@@ -1025,6 +1053,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                     value = object[i];
                 }
                 catch (e) {}
+
                 if (!hasValue) {
                     if (isArray(i) && i.length == 2)
                         [i, value] = i;
@@ -1064,10 +1093,13 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         function compare(a, b) {
             if (!isNaN(a[0]) && !isNaN(b[0]))
                 return a[0] - b[0];
-            return String.localeCompare(a[0], b[0]);
+            return String.localeCompare(String(a[0]),
+                                        String(b[0]));
         }
 
-        let vals = template.map(keys.sort(compare), function (f) f[1], "\n");
+        let vals = template.map(keys.sort(compare), f => f[1],
+                                "\n");
+
         if (color) {
             return ["div", { style: "white-space: pre-wrap" }, head, vals];
         }
@@ -1079,9 +1111,9 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
 
         function rec(data, level, seen) {
             if (isObject(data)) {
-                if (~seen.indexOf(data))
+                seen = RealSet(seen);
+                if (seen.add(data))
                     throw Error("Recursive object passed");
-                seen = seen.concat([data]);
             }
 
             let prefix = level + INDENT;
@@ -1097,28 +1129,28 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                 if (data.length == 0)
                     res.push("[]");
                 else {
-                    res.push("[\n")
+                    res.push("[\n");
                     for (let [i, val] in Iterator(data)) {
                         if (i)
                             res.push(",\n");
-                        res.push(prefix)
+                        res.push(prefix);
                         rec(val, prefix, seen);
                     }
                     res.push("\n", level, "]");
                 }
             }
             else if (isObject(data)) {
-                res.push("{\n")
+                res.push("{\n");
 
                 let i = 0;
                 for (let [key, val] in Iterator(data)) {
                     if (i++)
                         res.push(",\n");
-                    res.push(prefix, JSON.stringify(key), ": ")
+                    res.push(prefix, JSON.stringify(key), ": ");
                     rec(val, prefix, seen);
                 }
                 if (i > 0)
-                    res.push("\n", level, "}")
+                    res.push("\n", level, "}");
                 else
                     res[res.length - 1] = "{}";
             }
@@ -1129,7 +1161,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         }
 
         let res = [];
-        rec(data, "", []);
+        rec(data, "", RealSet());
         return res.join("");
     },
 
@@ -1142,28 +1174,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                     util.dump("cleanup: " + module.constructor.className);
                     util.trapErrors(module.cleanup, module, reason);
                 }
-
-            JSMLoader.cleanup();
-
-            if (!this.rehashing)
-                services.observer.addObserver(this, "dactyl-rehash", true);
-        },
-        "dactyl-rehash": function dactylRehash() {
-            services.observer.removeObserver(this, "dactyl-rehash");
-
-            defineModule.loadLog.push("dactyl: util: observe: dactyl-rehash");
-            if (!this.rehashing)
-                for (let module in values(defineModule.modules)) {
-                    defineModule.loadLog.push("dactyl: util: init(" + module + ")");
-                    if (module.reinit)
-                        module.reinit();
-                    else
-                        module.init();
-                }
-        },
-        "dactyl-purge": function dactylPurge() {
-            this.rehashing = 1;
-        },
+        }
     },
 
     /**
@@ -1221,7 +1232,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      *
      * This is similar to Perl's extended regular expression format.
      *
-     * @param {string|XML} expr The expression to compile into a RegExp.
+     * @param {string} expr The expression to compile into a RegExp.
      * @param {string} flags Flags to apply to the new RegExp.
      * @param {object} tokens The tokens to substitute. @optional
      * @returns {RegExp} A custom regexp object.
@@ -1246,14 +1257,15 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         // Replace replacement <tokens>.
         if (tokens)
             expr = String.replace(expr, /(\(?P)?<(\w+)>/g,
-                                  function (m, n1, n2) !n1 && Set.has(tokens, n2) ?    tokens[n2].dactylSource
-                                                                                    || tokens[n2].source
-                                                                                    || tokens[n2]
-                                                                                  : m);
+                                  (m, n1, n2) => !n1 && hasOwnProperty(tokens, n2) ?    tokens[n2].dactylSource
+                                                                                     || tokens[n2].source
+                                                                                     || tokens[n2]
+                                                                                   : m);
 
         // Strip comments and white space.
         if (/x/.test(flags))
-            expr = String.replace(expr, /(\\.)|\/\/[^\n]*|\/\*[^]*?\*\/|\s+/gm, function (m, m1) m1 || "");
+            expr = String.replace(expr, /(\\.)|\/\/[^\n]*|\/\*[^]*?\*\/|\s+/gm,
+                                  (m, m1) => m1 || "");
 
         // Replace (?P<named> parameters)
         if (/\(\?P</.test(expr)) {
@@ -1269,7 +1281,8 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         }
 
         let res = update(RegExp(expr, flags.replace("x", "")), {
-            closure: Class.Property(Object.getOwnPropertyDescriptor(Class.prototype, "closure")),
+            bound: Class.Property(Object.getOwnPropertyDescriptor(Class.prototype, "bound")),
+            closure: Class.Property(Object.getOwnPropertyDescriptor(Class.prototype, "bound")),
             dactylPropertyNames: ["exec", "match", "test", "toSource", "toString", "global", "ignoreCase", "lastIndex", "multiLine", "source", "sticky"],
             iterate: function iterate(str, idx) util.regexp.iterate(this, str, idx)
         });
@@ -1297,7 +1310,9 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
          * @param {RegExp} re The regexp showable source of which is to be returned.
          * @returns {string}
          */
-        getSource: function regexp_getSource(re) re.source.replace(/\\(.)/g, function (m0, m1) m1 === "/" ? "/" : m0),
+        getSource: function regexp_getSource(re) re.source.replace(/\\(.)/g,
+                                                                   (m0, m1) => m1 === "/" ? m1
+                                                                                          : m0),
 
         /**
          * Iterates over all matches of the given regexp in the given
@@ -1338,7 +1353,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         storage.storeForSession("commandlineArgs", args);
         this.timeout(function () {
             this.flushCache();
-            this.rehashing = true;
+            cache.flush(bind("test", /^literal:/));
             let addon = config.addon;
             addon.userDisabled = true;
             addon.userDisabled = false;
@@ -1346,7 +1361,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
     },
 
     errorCount: 0,
-    errors: Class.Memoize(function () []),
+    errors: Class.Memoize(() => []),
     maxErrors: 15,
     /**
      * Reports an error to the Error Console and the standard output,
@@ -1412,7 +1427,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
 
         let ary = host.split(".");
         ary = [ary.slice(i).join(".") for (i in util.range(ary.length, 0, -1))];
-        return ary.filter(function (h) h.length >= base.length);
+        return ary.filter(h => h.length >= base.length);
     },
 
     /**
@@ -1543,7 +1558,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * Waits for the function *test* to return true, or *timeout*
      * milliseconds to expire.
      *
-     * @param {function} test The predicate on which to wait.
+     * @param {function|Promise} test The predicate on which to wait.
      * @param {object} self The 'this' object for *test*.
      * @param {Number} timeout The maximum number of milliseconds to
      *      wait.
@@ -1553,6 +1568,15 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      *      thrown.
      */
     waitFor: function waitFor(test, self, timeout, interruptable) {
+        if (!callable(test)) {
+            let done = false;
+            var promise = test,
+                retVal;
+            promise.then((arg) => { retVal = arg; done = true; },
+                         (arg) => { retVal = arg; done = true; });
+            test = () => done;
+        }
+
         let end = timeout && Date.now() + timeout, result;
 
         let timer = services.Timer(function () {}, 10, services.Timer.TYPE_REPEATING_SLACK);
@@ -1563,7 +1587,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
         finally {
             timer.cancel();
         }
-        return result;
+        return promise ? retVal: result;
     },
 
     /**
@@ -1583,7 +1607,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * @returns {function} A new function which may not execute
      *      synchronously.
      */
-    yieldable: function yieldable(func)
+    yieldable: deprecated("Task.spawn", function yieldable(func)
         function magic() {
             let gen = func.apply(this, arguments);
             (function next() {
@@ -1592,7 +1616,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
                 }
                 catch (e if e instanceof StopIteration) {};
             })();
-        },
+        }),
 
     /**
      * Wraps a callback function such that its errors are not lost. This
@@ -1623,11 +1647,11 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * @param {function} func The function to call
      * @param {object} self The 'this' object for the function.
      */
-    trapErrors: function trapErrors(func, self) {
+    trapErrors: function trapErrors(func, self, ...args) {
         try {
             if (!callable(func))
                 func = self[func];
-            return func.apply(self || this, Array.slice(arguments, 2));
+            return func.apply(self || this, args);
         }
         catch (e) {
             this.reportError(e);
@@ -1661,7 +1685,8 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * @returns {[string]} The visible domains.
      */
     visibleHosts: function visibleHosts(win) {
-        let res = [], seen = {};
+        let res = [],
+            seen = RealSet();
         (function rec(frame) {
             try {
                 if (frame.location.hostname)
@@ -1670,7 +1695,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
             catch (e) {}
             Array.forEach(frame.frames, rec);
         })(win);
-        return res.filter(function (h) !Set.add(seen, h));
+        return res.filter(h => !seen.add(h));
     },
 
     /**
@@ -1681,7 +1706,8 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * @returns {[nsIURI]} The visible URIs.
      */
     visibleURIs: function visibleURIs(win) {
-        let res = [], seen = {};
+        let res = [],
+            seen = RealSet();
         (function rec(frame) {
             try {
                 res = res.concat(util.newURI(frame.location.href));
@@ -1689,7 +1715,7 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
             catch (e) {}
             Array.forEach(frame.frames, rec);
         })(win);
-        return res.filter(function (h) !Set.add(seen, h.spec));
+        return res.filter(h => !seen.add(h.spec));
     },
 
     /**
@@ -1709,9 +1735,9 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
      * @param {object} self The 'this' object of the method.
      * @param ... Arguments to pass to *meth*.
      */
-    withProperErrors: function withProperErrors(meth, self) {
+    withProperErrors: function withProperErrors(meth, self, ...args) {
         try {
-            return (callable(meth) ? meth : self[meth]).apply(self, Array.slice(arguments, withProperErrors.length));
+            return (callable(meth) ? meth : self[meth]).apply(self, args);
         }
         catch (e) {
             throw e.stack ? e : Error(e);
@@ -1720,7 +1746,6 @@ var Util = Module("Util", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference]), 
 }, {
     Array: array
 });
-
 
 /**
  * Math utility methods.
@@ -1743,4 +1768,4 @@ endModule();
 
 } catch(e){ if (!e.stack) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

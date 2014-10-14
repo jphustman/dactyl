@@ -43,38 +43,38 @@ const Player = Module("player", {
     _mediaCoreListener: {
         onMediacoreEvent: function (event) {
             switch (event.type) {
-                case Ci.sbIMediacoreEvent.BEFORE_TRACK_CHANGE:
-                    dactyl.log(_("player.preTrackChange", event.data));
-                    autocommands.trigger("TrackChangePre", { track: event.data });
-                    break;
-                case Ci.sbIMediacoreEvent.TRACK_CHANGE:
-                    dactyl.log(_("player.trackChanged", event.data));
-                    autocommands.trigger("TrackChange", { track: event.data });
-                    break;
-                case Ci.sbIMediacoreEvent.BEFORE_VIEW_CHANGE:
-                    dactyl.log(_("player.preViewChange", event.data));
-                    autocommands.trigger("ViewChangePre", { view: event.data });
-                    break;
-                case Ci.sbIMediacoreEvent.VIEW_CHANGE:
-                    dactyl.log(_("player.viewChange", event.data));
-                    autocommands.trigger("ViewChange", { view: event.data });
-                    break;
-                case Ci.sbIMediacoreEvent.STREAM_START:
-                    dactyl.log(_("player.trackStart", gMM.sequencer.currentItem));
-                    autocommands.trigger("StreamStart", { track: gMM.sequencer.currentItem });
-                    break;
-                case Ci.sbIMediacoreEvent.STREAM_PAUSE:
-                    dactyl.log(_("player.trackPause", gMM.sequencer.currentItem));
-                    autocommands.trigger("StreamPause", { track: gMM.sequencer.currentItem });
-                    break;
-                case Ci.sbIMediacoreEvent.STREAM_END:
-                    dactyl.log(_("player.trackEnd", gMM.sequencer.currentItem));
-                    autocommands.trigger("StreamEnd", { track: gMM.sequencer.currentItem });
-                    break;
-                case Ci.sbIMediacoreEvent.STREAM_STOP:
-                    dactyl.log(_("player.trackStop", gMM.sequencer.currentItem));
-                    autocommands.trigger("StreamStop", { track: gMM.sequencer.currentItem });
-                    break;
+            case Ci.sbIMediacoreEvent.BEFORE_TRACK_CHANGE:
+                dactyl.log(_("player.preTrackChange", event.data));
+                autocommands.trigger("TrackChangePre", { track: event.data });
+                break;
+            case Ci.sbIMediacoreEvent.TRACK_CHANGE:
+                dactyl.log(_("player.trackChanged", event.data));
+                autocommands.trigger("TrackChange", { track: event.data });
+                break;
+            case Ci.sbIMediacoreEvent.BEFORE_VIEW_CHANGE:
+                dactyl.log(_("player.preViewChange", event.data));
+                autocommands.trigger("ViewChangePre", { view: event.data });
+                break;
+            case Ci.sbIMediacoreEvent.VIEW_CHANGE:
+                dactyl.log(_("player.viewChange", event.data));
+                autocommands.trigger("ViewChange", { view: event.data });
+                break;
+            case Ci.sbIMediacoreEvent.STREAM_START:
+                dactyl.log(_("player.trackStart", gMM.sequencer.currentItem));
+                autocommands.trigger("StreamStart", { track: gMM.sequencer.currentItem });
+                break;
+            case Ci.sbIMediacoreEvent.STREAM_PAUSE:
+                dactyl.log(_("player.trackPause", gMM.sequencer.currentItem));
+                autocommands.trigger("StreamPause", { track: gMM.sequencer.currentItem });
+                break;
+            case Ci.sbIMediacoreEvent.STREAM_END:
+                dactyl.log(_("player.trackEnd", gMM.sequencer.currentItem));
+                autocommands.trigger("StreamEnd", { track: gMM.sequencer.currentItem });
+                break;
+            case Ci.sbIMediacoreEvent.STREAM_STOP:
+                dactyl.log(_("player.trackStop", gMM.sequencer.currentItem));
+                autocommands.trigger("StreamStop", { track: gMM.sequencer.currentItem });
+                break;
             }
         }
     },
@@ -168,18 +168,18 @@ const Player = Module("player", {
      */
     toggleRepeat: function toggleRepeat() {
         switch (gMM.sequencer.repeatMode) {
-            case gMM.sequencer.MODE_REPEAT_NONE:
-                gMM.sequencer.repeatMode = gMM.sequencer.MODE_REPEAT_ONE;
-                break;
-            case gMM.sequencer.MODE_REPEAT_ONE:
-                gMM.sequencer.repeatMode = gMM.sequencer.MODE_REPEAT_ALL;
-                break;
-            case gMM.sequencer.MODE_REPEAT_ALL:
-                gMM.sequencer.repeatMode = gMM.sequencer.MODE_REPEAT_NONE;
-                break;
-            default:
-                gMM.sequencer.repeatMode = gMM.sequencer.MODE_REPEAT_NONE;
-                break;
+        case gMM.sequencer.MODE_REPEAT_NONE:
+            gMM.sequencer.repeatMode = gMM.sequencer.MODE_REPEAT_ONE;
+            break;
+        case gMM.sequencer.MODE_REPEAT_ONE:
+            gMM.sequencer.repeatMode = gMM.sequencer.MODE_REPEAT_ALL;
+            break;
+        case gMM.sequencer.MODE_REPEAT_ALL:
+            gMM.sequencer.repeatMode = gMM.sequencer.MODE_REPEAT_NONE;
+            break;
+        default:
+            gMM.sequencer.repeatMode = gMM.sequencer.MODE_REPEAT_NONE;
+            break;
         }
     },
 
@@ -343,7 +343,7 @@ const Player = Module("player", {
             onEnumerationEnd: function () { },
             onEnumeratedItem: function (list, item) {
                 // FIXME: why are there null items and duplicates?
-                if (!playlists.some(function (list) list.name == item.name) && item.name != null)
+                if (!playlists.some(list => list.name == item.name) && item.name != null)
                     playlists.push(item);
                 return Ci.sbIMediaListEnumerationListener.CONTINUE;
             }
@@ -372,7 +372,7 @@ const Player = Module("player", {
     getMediaPages: function getMediaPages() {
         let list = SBGetBrowser().currentMediaPage.mediaListView.mediaList;
         let pages = services.mediaPageManager.getAvailablePages(list);
-        return ArrayConverter.JSArray(pages).map(function (page) page.QueryInterface(Ci.sbIMediaPageInfo));
+        return ArrayConverter.JSArray(pages).map(page => page.QueryInterface(Ci.sbIMediaPageInfo));
     },
 
     /**
@@ -414,27 +414,27 @@ const Player = Module("player", {
         properties.strict = false;
 
         switch (field) {
-            case "title":
-                properties.appendProperty(SBProperties.trackName, order);
-                break;
-            case "time":
-                properties.appendProperty(SBProperties.duration, order);
-                break;
-            case "artist":
-                properties.appendProperty(SBProperties.artistName, order);
-                break;
-            case "album":
-                properties.appendProperty(SBProperties.albumName, order);
-                break;
-            case "genre":
-                properties.appendProperty(SBProperties.genre, order);
-                break;
-            case "rating":
-                properties.appendProperty(SBProperties.rating, order);
-                break;
-            default:
-                properties.appendProperty(SBProperties.trackName, order);
-                break;
+        case "title":
+            properties.appendProperty(SBProperties.trackName, order);
+            break;
+        case "time":
+            properties.appendProperty(SBProperties.duration, order);
+            break;
+        case "artist":
+            properties.appendProperty(SBProperties.artistName, order);
+            break;
+        case "album":
+            properties.appendProperty(SBProperties.albumName, order);
+            break;
+        case "genre":
+            properties.appendProperty(SBProperties.genre, order);
+            break;
+        case "rating":
+            properties.appendProperty(SBProperties.rating, order);
+            break;
+        default:
+            properties.appendProperty(SBProperties.trackName, order);
+            break;
         }
 
         this._currentView.setSort(properties);
@@ -625,15 +625,15 @@ const Player = Module("player", {
 
                 // args
                 switch (args.length) {
-                    case 3:
-                        properties.appendProperty(SBProperties.trackName, args[2]);
-                    case 2:
-                        properties.appendProperty(SBProperties.albumName, args[1]);
-                    case 1:
-                        properties.appendProperty(SBProperties.artistName, args[0]);
-                        break;
-                    default:
-                        break;
+                case 3:
+                    properties.appendProperty(SBProperties.trackName, args[2]);
+                case 2:
+                    properties.appendProperty(SBProperties.albumName, args[1]);
+                case 1:
+                    properties.appendProperty(SBProperties.artistName, args[0]);
+                    break;
+                default:
+                    break;
                 }
 
                 let library = LibraryUtils.mainLibrary;
@@ -715,7 +715,7 @@ const Player = Module("player", {
 
         mappings.add([modes.PLAYER],
             ["z"], "Previous track",
-            function (args) { ex.playerprev({ "#": args.count }); },
+            function ({ count }) { ex.playerprev({ "#": count }); },
             { count: true });
 
         mappings.add([modes.PLAYER],
@@ -724,7 +724,7 @@ const Player = Module("player", {
 
         mappings.add([modes.PLAYER],
             ["b"], "Next track",
-            function (args) { ex.playernext({ "#": args.count }); },
+            function ({ count }) { ex.playernext({ "#": count }); },
             { count: true });
 
         mappings.add([modes.PLAYER],
@@ -753,22 +753,22 @@ const Player = Module("player", {
 
         mappings.add([modes.PLAYER],
             ["h", "<Left>"], "Seek -10s",
-            function (args) { player.seekBackward(Math.max(1, args.count) * 10000); },
+            function ({ count} ) { player.seekBackward(Math.max(1, count) * 10000); },
             { count: true });
 
         mappings.add([modes.PLAYER],
             ["l", "<Right>"], "Seek +10s",
-            function (args) { player.seekForward(Math.max(1, args.count) * 10000); },
+            function ({ count} ) { player.seekForward(Math.max(1, count) * 10000); },
             { count: true });
 
         mappings.add([modes.PLAYER],
             ["H", "<S-Left>"], "Seek -1m",
-            function (args) { player.seekBackward(Math.max(1, args.count) * 60000); },
+            function ({ count }) { player.seekBackward(Math.max(1, count) * 60000); },
             { count: true });
 
         mappings.add([modes.PLAYER],
             ["L", "<S-Right>"], "Seek +1m",
-            function (args) { player.seekForward(Math.max(1, args.count) * 60000); },
+            function ({ count }) { player.seekForward(Math.max(1, count) * 60000); },
             { count: true });
 
         mappings.add([modes.PLAYER],
@@ -830,4 +830,4 @@ const Player = Module("player", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

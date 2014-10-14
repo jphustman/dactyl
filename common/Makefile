@@ -1,11 +1,17 @@
 #### configuration
 
 
+_SH       := $(shell if which dash >/dev/null 2>&1; \
+		     then echo dash; \
+		     else echo sh;   \
+		     fi)
+SH        ?= $(_SH)
 AWK       ?= awk
 B64ENCODE ?= base64
 CURL      ?= curl
 SED       := $(shell if [ "xoo" = x$$(echo foo | sed -E 's/f(o)/\1/' 2>/dev/null) ]; \
-		     then echo sed -E; else echo sed -r;			     \
+		     then echo sed -E; \
+		     else echo sed -r; \
 		     fi)
 
 TOP           = $(shell pwd)
@@ -28,7 +34,7 @@ LOCALEDIR     = locale
 DOC_FILES     = $(wildcard $(LOCALEDIR)/*/*.xml)
 
 export VERSION BUILD_DATE
-MAKE_JAR      = sh $(BASE)/make_jar.sh
+MAKE_JAR      = $(SH) $(BASE)/make_jar.sh
 
 # TODO: specify source files manually?
 JAR_BASES     = $(TOP) $(BASE)
@@ -90,26 +96,6 @@ info:
 
 jar: $(JAR)
 
-# This is not for you!
-dist: $(XPI)
-	@echo DIST $(XPI) $(GOOGLE)
-	set -e;							        	\
-								        	\
-	proj=$$(echo -n $(NAME) | sed 's/\(.\).*/\1/' | tr a-z A-Z);    	\
-	proj="$$proj$$(echo $(NAME) | sed 's/.//')";                    	\
-	[ -z "$$summary" ] && summary="$$proj $(VERSION) Release"; 		\
-	labels="Project-$$proj,$(labels)";					\
-	[ -n "$(featured)" ] && labels="$$labels,Featured";             	\
-								        	\
-	IFS=,; for l in $$labels; do						\
-		set -- "$$@" --form-string "label=$$l";				\
-	done;									\
-	auth=$$(echo -n "$(GOOGLE_USER):$(GOOGLE_PASS)" | $(B64ENCODE));	\
-	$(CURL) "$$@" --form-string "summary=$$summary" 			\
-		-F "filename=@$(XPI)"						\
-		-H "Authorization: Basic $$auth"				\
-		-i "$(GOOGLE)" | sed -n '/^Location/{p;q;}'
-
 install:
 	export dir; 								\
 	for dir in $(PROFILEPATHS); do 						\
@@ -164,20 +150,22 @@ distclean:
 
 test: xpi
 	@echo "Running $(NAME) functional tests..."
-	@echo $(IDNAME)_INIT="set loadplugins=" \
-		$(MOZMILL) -l $(TEST_LOG) -b $(HOSTAPP_PATH) -a $(XPI) -t $(TEST_DIR)
 	$(IDNAME)_INIT="set loadplugins=" \
-		$(MOZMILL) -l $(TEST_LOG) -b $(HOSTAPP_PATH) -a $(XPI) -t $(TEST_DIR)
+		$(MOZMILL) --show-all -l $(TEST_LOG) -b $(HOSTAPP_PATH) --addons $(XPI) -t $(TEST_DIR)
 
 #### xpi
 
 xpi: $(CHROME)
 	@echo "Building XPI..."
 	mkdir -p "$(XPI_PATH)"
-	echo $(XPI_PATH)
+
 	$(AWK) -v 'name=$(NAME)' -v 'suffix=$(MANGLE)' \
 	       -f $(BASE)/process_manifest.awk \
 	       "$(TOP)/chrome.manifest" >"$(XPI_PATH)/chrome.manifest"
+
+	$(AWK) -v 'name=$(NAME)' -v 'suffix=$(MANGLE)' \
+	       -f $(BASE)/process_config.awk \
+	       "$(TOP)/config.json" >"$(XPI_PATH)/config.json"
 
 	version="$(VERSION)"; 			\
 	hg root >/dev/null 2>&1 && 		\
@@ -188,7 +176,7 @@ xpi: $(CHROME)
 		<"$(TOP)/install.rdf" >"$(XPI_PATH)/install.rdf"
 
 	$(MAKE_JAR) "$(XPI)" "$(XPI_BASES)" "$(XPI_DIRS)" "$(XPI_TEXTS)" "$(XPI_BINS)" "$(XPI_FILES)"
-	rm -r $(MANGLE).zip
+	rm -r -- $(CHROME)
 	@echo "Built XPI: $(XPI)"
 
 #### jar

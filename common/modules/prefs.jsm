@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -111,10 +111,11 @@ var Prefs = Module("prefs", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference])
             switch (type) {
             case Ci.nsIPrefBranch.PREF_STRING:
                 let value = this.branch.getComplexValue(name, Ci.nsISupportsString).data;
-                // try in case it's a localized string (will throw an exception if not)
-                if (!this.branch.prefIsLocked(name) && !this.branch.prefHasUserValue(name) &&
-                    RegExp("chrome://.+/locale/.+\\.properties").test(value))
-                        value = this.branch.getComplexValue(name, Ci.nsIPrefLocalizedString).data;
+                try {
+                    if (/^[a-z0-9-]+:/i.test(value))
+                    value = this.branch.getComplexValue(name, Ci.nsIPrefLocalizedString).data;
+                }
+                catch (e) {}
                 return value;
             case Ci.nsIPrefBranch.PREF_INT:
                 return this.branch.getIntPref(name);
@@ -290,7 +291,7 @@ var Prefs = Module("prefs", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference])
      * @param {string} branch The preference name. @optional
      */
     resetBranch: function resetBranch(branch) {
-        this.getNames(branch).forEach(this.closure.reset);
+        this.getNames(branch).forEach(this.bound.reset);
     },
 
     /**
@@ -350,9 +351,10 @@ var Prefs = Module("prefs", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference])
             if (observers) {
                 let value = this.get(data, false);
                 this._observers[data] = observers.filter(function (callback) {
-                    if (!callback.get())
+                    callback = callback.get();
+                    if (!callback)
                         return false;
-                    util.trapErrors(callback.get(), null, value);
+                    util.trapErrors(callback, null, value);
                     return true;
                 });
             }
@@ -374,7 +376,8 @@ var Prefs = Module("prefs", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference])
 
         if (!this._observers[pref])
             this._observers[pref] = [];
-        this._observers[pref].push(!strong ? util.weakReference(callback) : { get: function () callback });
+        this._observers[pref].push(!strong ? util.weakReference(callback)
+                                           : { get: function () callback });
     },
 
     /**
@@ -396,7 +399,7 @@ var Prefs = Module("prefs", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference])
         function prefs() {
             for (let [, pref] in Iterator(prefArray)) {
                 let userValue = services.pref.prefHasUserValue(pref);
-                if (onlyNonDefault && !userValue || pref.indexOf(filter) == -1)
+                if (onlyNonDefault && !userValue || !pref.contains(filter))
                     continue;
 
                 let value = this.get(pref);
@@ -421,13 +424,14 @@ var Prefs = Module("prefs", XPCOM([Ci.nsIObserver, Ci.nsISupportsWeakReference])
         modules.completion.preference = function preference(context) {
             context.anchored = false;
             context.title = [config.host + " Preference", "Value"];
-            context.keys = { text: function (item) item, description: function (item) prefs.get(item) };
+            context.keys = { text: function (item) item,
+                             description: function (item) prefs.get(item) };
             context.completions = prefs.getNames();
         };
     },
     javascript: function init_javascript(dactyl, modules) {
         modules.JavaScript.setCompleter([this.get, this.safeSet, this.set, this.reset, this.toggle],
-                [function (context) (context.anchored=false, this.getNames().map(function (pref) [pref, ""]))]);
+                [function (context) (context.anchored=false, this.getNames().map(pref => [pref, ""]))]);
     }
 });
 
@@ -438,4 +442,4 @@ endModule();
 
 } catch(e){ if (!e.stack) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

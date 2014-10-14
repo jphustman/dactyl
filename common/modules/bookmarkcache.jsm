@@ -1,4 +1,4 @@
-// Copyright ©2008-2010 Kris Maglione <maglione.k at Gmail>
+// Copyright ©2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -27,7 +27,7 @@ update(Bookmark.prototype, {
     get extra() [
         ["keyword", this.keyword,         "Keyword"],
         ["tags",    this.tags.join(", "), "Tag"]
-    ].filter(function (item) item[1]),
+    ].filter(item => item[1]),
 
     get uri() newURI(this.url),
     set uri(uri) {
@@ -90,7 +90,7 @@ var BookmarkCache = Module("BookmarkCache", XPCOM(Ci.nsINavBookmarkObserver), {
     keywords: Class.Memoize(function () array.toObject([[b.keyword, b] for (b in this) if (b.keyword)])),
 
     rootFolders: ["toolbarFolder", "bookmarksMenuFolder", "unfiledBookmarksFolder"]
-        .map(function (s) services.bookmarks[s]),
+        .map(s => services.bookmarks[s]),
 
     _deleteBookmark: function deleteBookmark(id) {
         let result = this.bookmarks[id] || null;
@@ -160,7 +160,7 @@ var BookmarkCache = Module("BookmarkCache", XPCOM(Ci.nsINavBookmarkObserver), {
         try {
             return services.bookmarks
                            .getBookmarkIdsForURI(uri, {})
-                           .some(this.closure.isRegularBookmark);
+                           .some(this.bound.isRegularBookmark);
         }
         catch (e) {
             return false;
@@ -262,4 +262,4 @@ var BookmarkCache = Module("BookmarkCache", XPCOM(Ci.nsINavBookmarkObserver), {
 
 endModule();
 
-// vim: set fdm=marker sw=4 sts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

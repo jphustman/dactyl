@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2011-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -11,9 +11,9 @@ defineModule("messages", {
 
 var Messages = Module("messages", {
 
-    init: function init(name) {
+    init: function init(name="messages") {
         let self = this;
-        this.name = name || "messages";
+        this.name = name;
 
         this._ = Class("_", String, {
             init: function _(message) {
@@ -45,13 +45,21 @@ var Messages = Module("messages", {
                     "resource://dactyl-locale-local/en-US/" + this.name + ".properties"],
                    true)
              .map(services.stringBundle.createBundle)
-             .filter(function (bundle) { try { bundle.getSimpleEnumeration(); return true; } catch (e) { return false; } })),
+             .filter(function (bundle) {
+                 try {
+                     bundle.getSimpleEnumeration();
+                     return true;
+                 }
+                 catch (e) {
+                     return false;
+                 }
+             })),
 
     iterate: function () {
-        let seen = {};
+        let seen = RealSet();
         for (let bundle in values(this.bundles))
             for (let { key, value } in iter(bundle.getSimpleEnumeration(), Ci.nsIPropertyElement))
-                if (!Set.add(seen, key))
+                if (!seen.add(key))
                     yield [key, value];
     },
 
@@ -97,10 +105,9 @@ var Messages = Module("messages", {
         let { Buffer, commands, hints, io, mappings, modes, options, sanitizer } = overlay.activeModules;
         file = io.File(file);
 
-        function properties(base, iter_, prop) iter(function _properties() {
-            function key() [base, obj.identifier || obj.name].concat(Array.slice(arguments)).join(".").replace(/[\\:=]/g, "\\$&");
+        function properties(base, iter_, prop="description") iter(function _properties() {
+            function key(...args) [base, obj.identifier || obj.name].concat(args).join(".").replace(/[\\:=]/g, "\\$&");
 
-            prop = prop || "description";
             for (var obj in iter_) {
                 if (!obj.hive || obj.hive.name !== "user") {
                     yield key(prop) + " = " + obj[prop];
@@ -119,11 +126,11 @@ var Messages = Module("messages", {
         }()).toArray();
 
         file.write(
-            array(commands.allHives.map(function (h) properties("command", h)))
-                          .concat(modes.all.map(function (m)
+            array(commands.allHives.map(h => properties("command", h)))
+                          .concat(modes.all.map(m =>
                               properties("map", values(mappings.builtin.getStack(m)
-                                                               .filter(function (map) map.modes[0] == m)))))
-                          .concat(properties("mode", values(modes.all.filter(function (m) !m.hidden))))
+                                                               .filter(map => map.modes[0] == m)))))
+                          .concat(properties("mode", values(modes.all.filter(m => !m.hidden))))
                           .concat(properties("option", options))
                           .concat(properties("hintmode", values(hints.modes), "prompt"))
                           .concat(properties("pageinfo", values(Buffer.pageInfo), "title"))
@@ -140,14 +147,13 @@ var Messages = Module("messages", {
                     return { configurable: true, enumerable: true, value: this.default, writable: true };
                 */
 
-                if (!Set.has(obj, "localizedProperties"))
-                    obj.localizedProperties = { __proto__: obj.localizedProperties };
-                obj.localizedProperties[prop] = true;
+                if (!hasOwnProperty(obj, "localizedProperties"))
+                    obj.localizedProperties = RealSet(obj.localizedProperties);
+                obj.localizedProperties.add(prop);
 
                 obj[_prop] = this.default;
                 return {
                     get: function get() {
-                        let self = this;
                         let value = this[_prop];
 
                         function getter(key, default_) function getter() messages.get([name, key].join("."), default_);
@@ -169,7 +175,7 @@ var Messages = Module("messages", {
                                 });
                             else
                                 iter(value).forEach(function ([k, v]) {
-                                    memoize(value, k, function () messages.get([name, k].join("."), v));
+                                    memoize(value, k, () => messages.get([name, k].join("."), v));
                                 });
                         }
 
@@ -188,7 +194,7 @@ var Messages = Module("messages", {
         let { JavaScript } = modules;
 
         JavaScript.setCompleter([this._, this.get, this.format], [
-            function (context) messages.iterate()
+            context => messages.iterate()
         ]);
 
         JavaScript.setCompleter([this.export],
@@ -205,4 +211,4 @@ endModule();
 
 // catch(e){ if (!e.stack) e = Error(e); dump(e.fileName+":"+e.lineNumber+": "+e+"\n" + e.stack); }
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

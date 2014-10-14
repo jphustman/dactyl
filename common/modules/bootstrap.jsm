@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2011-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -6,11 +6,11 @@
 
 var EXPORTED_SYMBOLS = ["require"];
 
-// Deal with cross-compartment XML passing issues.
 function create(proto) Object.create(proto);
+
 this["import"] = function import_(obj) {
     let res = {};
-    for each (let key in Object.getOwnPropertyNames(obj))
+    for (let key of Object.getOwnPropertyNames(obj))
         Object.defineProperty(res, key, Object.getOwnPropertyDescriptor(obj, key));
     return res;
 }
@@ -19,3 +19,4 @@ this["import"] = function import_(obj) {
 Components.utils.import("resource://gre/modules/Services.jsm");
 function loadSubScript() Services.scriptloader.loadSubScript.apply(null, arguments);
 
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

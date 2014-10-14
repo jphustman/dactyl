@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2011 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 // Copyright (c) 2006-2009 by Martin Stubenschrott <stubenschrott@vimperator.org>
 //
 // This work is licensed for reuse under an MIT license. Details are
@@ -46,7 +46,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
         }, this);
     },
 
-    defaultRegister: "*",
+    defaultRegister: "*+",
 
     selectionRegisters: {
         "*": "selection",
@@ -64,11 +64,12 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
         if (name == null)
             name = editor.currentRegister || editor.defaultRegister;
 
+        name = String(name)[0];
         if (name == '"')
             name = 0;
         if (name == "_")
             var res = null;
-        else if (Set.has(this.selectionRegisters, name))
+        else if (hasOwnProperty(this.selectionRegisters, name))
             res = { text: dactyl.clipboardRead(this.selectionRegisters[name]) || "" };
         else if (!/^[0-9]$/.test(name))
             res = this.registers.get(name);
@@ -101,17 +102,19 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             value = DOM.stringify(value);
         value = { text: value, isLine: modes.extended & modes.LINE, timestamp: Date.now() * 1000 };
 
-        if (name == '"')
-            name = 0;
-        if (name == "_")
-            ;
-        else if (Set.has(this.selectionRegisters, name))
-            dactyl.clipboardWrite(value.text, verbose, this.selectionRegisters[name]);
-        else if (!/^[0-9]$/.test(name))
-            this.registers.set(name, value);
-        else {
-            this.registerRing.insert(value, name);
-            this.registerRing.truncate(10);
+        for (let n of String(name)) {
+            if (n == '"')
+                n = 0;
+            if (n == "_")
+                ;
+            else if (hasOwnProperty(this.selectionRegisters, n))
+                dactyl.clipboardWrite(value.text, verbose, this.selectionRegisters[n]);
+            else if (!/^[0-9]$/.test(n))
+                this.registers.set(n, value);
+            else {
+                this.registerRing.insert(value, n);
+                this.registerRing.truncate(10);
+            }
         }
     },
 
@@ -168,14 +171,14 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             this.setRegister(name, range);
     },
 
-    cut: function cut(range, name) {
+    cut: function cut(range, name, noStrip) {
         if (range)
             this.selectedRange = range;
 
         if (!this.selection.isCollapsed)
             this.setRegister(name, this.selection);
 
-        this.editor.deleteSelection(0);
+        this.editor.deleteSelection(0, this.editor[noStrip ? "eNoStrip" : "eStrip"]);
     },
 
     paste: function paste(name) {
@@ -304,7 +307,9 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
 
         // Skip to any requested offset.
         count = Math.abs(offset);
-        Editor.extendRange(range, offset > 0, { test: function (c) !!count-- }, true);
+        Editor.extendRange(range, offset > 0,
+                           { test: c => !!count-- },
+                           true);
         range.collapse(offset < 0);
 
         return range;
@@ -364,7 +369,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             args = { file: args };
         args.file = args.file.path || args.file;
 
-        let args = options.get("editor").format(args);
+        args = options.get("editor").format(args);
 
         dactyl.assert(args.length >= 1, _("option.notSet", "editor"));
 
@@ -381,11 +386,11 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             textBox = null;
 
         let line, column;
-        let keepFocus = modes.stack.some(function (m) isinstance(m.main, modes.COMMAND_LINE));
+        let keepFocus = modes.stack.some(m => isinstance(m.main, modes.COMMAND_LINE));
 
         if (!forceEditing && textBox && textBox.type == "password") {
-            commandline.input(_("editor.prompt.editPassword") + " ",
-                function (resp) {
+            commandline.input(_("editor.prompt.editPassword") + " ")
+                .then(function (resp) {
                     if (resp && resp.match(/^y(es)?$/i))
                         editor.editFieldExternally(true);
                 });
@@ -400,7 +405,9 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             var editor_ = window.GetCurrentEditor ? GetCurrentEditor()
                                                   : Editor.getEditor(document.commandDispatcher.focusedWindow);
             dactyl.assert(editor_);
-            text = Array.map(editor_.rootElement.childNodes, function (e) DOM.stringify(e, true)).join("");
+            text = Array.map(editor_.rootElement.childNodes,
+                             e => DOM.stringify(e, true))
+                        .join("");
 
             if (!editor_.selection.rangeCount)
                 var sel = "";
@@ -420,7 +427,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
         column = 1 + pre.replace(/[^]*\n/, "").length;
 
         let origGroup = DOM(textBox).highlight.toString();
-        let cleanup = util.yieldable(function cleanup(error) {
+        let cleanup = promises.task(function cleanup(error) {
             if (timer)
                 timer.cancel();
 
@@ -439,9 +446,11 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
                 DOM(textBox).highlight.remove("EditorEditing");
                 if (!keepFocus)
                     dactyl.focus(textBox);
+
                 for (let group in values(blink.concat(blink, ""))) {
                     highlight.highlightNode(textBox, origGroup + " " + group);
-                    yield 100;
+
+                    yield promises.sleep(100);
                 }
             }
         });
@@ -470,7 +479,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
         }
 
         try {
-            var tmpfile = io.createTempFile();
+            var tmpfile = io.createTempFile("txt", "." + buffer.uri.host);
             if (!tmpfile)
                 throw Error(_("io.cantCreateTempFile"));
 
@@ -756,9 +765,9 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
     completion: function initCompletion() {
         completion.register = function complete_register(context) {
             context = context.fork("registers");
-            context.keys = { text: util.identity, description: editor.closure.getRegister };
+            context.keys = { text: util.identity, description: editor.bound.getRegister };
 
-            context.match = function (r) !this.filter || ~this.filter.indexOf(r);
+            context.match = function (r) !this.filter || this.filter.contains(r);
 
             context.fork("clipboard", 0, this, function (ctxt) {
                 ctxt.match = context.match;
@@ -870,7 +879,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
         function addBeginInsertModeMap(keys, commands, description) {
             mappings.add([modes.TEXT_EDIT], keys, description || "",
                 function () {
-                    commands.forEach(function (cmd) { editor.executeCommand(cmd, 1) });
+                    commands.forEach(function (cmd) { editor.executeCommand(cmd, 1); });
                     modes.push(modes.INSERT);
                 },
                 { type: "editor" });
@@ -1035,7 +1044,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
         }
 
         addMotionMap(["d", "x"], "Delete text", true,  function (editor) { editor.cut(); });
-        addMotionMap(["c"],      "Change text", true,  function (editor) { editor.cut(); }, modes.INSERT);
+        addMotionMap(["c"],      "Change text", true,  function (editor) { editor.cut(null, null, true); }, modes.INSERT);
         addMotionMap(["y"],      "Yank text",   false, function (editor, range) { editor.copy(range); }, null, true);
 
         addMotionMap(["gu"], "Lowercase text", false,
@@ -1131,7 +1140,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
              "<*-Home>", "<*-End>", "<*-PageUp>", "<*-PageDown>",
              "<M-c>", "<M-v>", "<*-Tab>"],
             "Handled by " + config.host,
-            function () Events.PASS_THROUGH);
+            () => Events.PASS_THROUGH);
 
         mappings.add([modes.INSERT],
             ["<Space>", "<Return>"], "Expand Insert mode abbreviation",
@@ -1144,30 +1153,29 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             ["<C-]>", "<C-5>"], "Expand Insert mode abbreviation",
             function () { editor.expandAbbreviation(modes.INSERT); });
 
-        let bind = function bind(names, description, action, params)
+        bind = function bind(names, description, action, params)
             mappings.add([modes.TEXT_EDIT], names, description,
                          action, update({ type: "editor" }, params));
 
-
         bind(["<C-a>"], "Increment the next number",
-             function ({ count }) { editor.modifyNumber(count || 1) },
+             function ({ count }) { editor.modifyNumber(count || 1); },
              { count: true });
 
         bind(["<C-x>"], "Decrement the next number",
-             function ({ count }) { editor.modifyNumber(-(count || 1)) },
+             function ({ count }) { editor.modifyNumber(-(count || 1)); },
              { count: true });
 
         // text edit mode
         bind(["u"], "Undo changes",
-             function (args) {
-                 editor.editor.undo(Math.max(args.count, 1));
+             function ({ count }) {
+                 editor.editor.undo(Math.max(count, 1));
                  editor.deselect();
              },
              { count: true, noTransaction: true });
 
         bind(["<C-r>"], "Redo undone changes",
-             function (args) {
-                 editor.editor.redo(Math.max(args.count, 1));
+             function ({ count }) {
+                 editor.editor.redo(Math.max(count, 1));
                  editor.deselect();
              },
              { count: true, noTransaction: true });
@@ -1258,7 +1266,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             },
             { arg: true });
 
-        let bind = function bind(names, description, action, params)
+        bind = function bind(names, description, action, params)
             mappings.add([modes.TEXT_EDIT, modes.OPERATOR, modes.VISUAL],
                          names, description,
                          action, update({ type: "editor" }, params));
@@ -1317,7 +1325,7 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
                 var range = editor.selectedRange;
                 if (range.collapsed) {
                     count = count || 1;
-                    Editor.extendRange(range, true, { test: function (c) !!count-- }, true);
+                    Editor.extendRange(range, true, { test: c => !!count-- }, true);
                 }
                 editor.mungeRange(range, munger, count != null);
 
@@ -1325,23 +1333,22 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             },
             { count: true });
 
-        let bind = function bind() mappings.add.apply(mappings,
-                                                      [[modes.AUTOCOMPLETE]].concat(Array.slice(arguments)))
+        bind = function bind(...args) mappings.add.apply(mappings, [[modes.AUTOCOMPLETE]].concat(args));
 
         bind(["<Esc>"], "Return to Insert mode",
-             function () Events.PASS_THROUGH);
+             () => Events.PASS_THROUGH);
 
         bind(["<C-[>"], "Return to Insert mode",
              function () { events.feedkeys("<Esc>", { skipmap: true }); });
 
         bind(["<Up>"], "Select the previous autocomplete result",
-             function () Events.PASS_THROUGH);
+             () => Events.PASS_THROUGH);
 
         bind(["<C-p>"], "Select the previous autocomplete result",
              function () { events.feedkeys("<Up>", { skipmap: true }); });
 
         bind(["<Down>"], "Select the next autocomplete result",
-             function () Events.PASS_THROUGH);
+             () => Events.PASS_THROUGH);
 
         bind(["<C-n>"], "Select the next autocomplete result",
              function () { events.feedkeys("<Down>", { skipmap: true }); });
@@ -1351,17 +1358,22 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
             "The external text editor",
             "string", 'gvim -f +<line> +"sil! call cursor(0, <column>)" <file>', {
                 format: function (obj, value) {
-                    let args = commands.parseArgs(value || this.value, { argCount: "*", allowUnknownOptions: true })
-                                       .map(util.compileMacro).filter(function (fmt) fmt.valid(obj))
-                                       .map(function (fmt) fmt(obj));
+                    let args = commands.parseArgs(value || this.value,
+                                                  { argCount: "*", allowUnknownOptions: true })
+                                       .map(util.compileMacro)
+                                       .filter(fmt => fmt.valid(obj))
+                                       .map(fmt => fmt(obj));
+
                     if (obj["file"] && !this.has("file"))
                         args.push(obj["file"]);
                     return args;
                 },
-                has: function (key) Set.has(util.compileMacro(this.value).seen, key),
+                has: function (key) util.compileMacro(this.value).seen.has(key),
                 validator: function (value) {
                     this.format({}, value);
-                    return Object.keys(util.compileMacro(value).seen).every(function (k) ["column", "file", "line"].indexOf(k) >= 0);
+                    let allowed = RealSet(["column", "file", "line"]);
+                    return [k for (k of util.compileMacro(value).seen)]
+                                .every(k => allowed.has(k));
                 }
             });
 
@@ -1407,4 +1419,4 @@ var Editor = Module("editor", XPCOM(Ci.nsIEditActionListener, ModuleBase), {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

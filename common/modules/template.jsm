@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -106,7 +106,7 @@ var Template = Module("Template", {
                 "click": function onClick(event) {
                     event.preventDefault();
                     if (this.commandAllowed) {
-                        if (Set.has(this.target.commands || {}, this.command))
+                        if (hasOwnProperty(this.target.commands || {}, this.command))
                             this.target.commands[this.command].call(this.target);
                         else
                             this.target.command(this.command);
@@ -115,7 +115,7 @@ var Template = Module("Template", {
             },
 
             get commandAllowed() {
-                if (Set.has(this.target.allowedCommands || {}, this.command))
+                if (hasOwnProperty(this.target.allowedCommands || {}, this.command))
                     return this.target.allowedCommands[this.command];
                 if ("commandAllowed" in this.target)
                     return this.target.commandAllowed(this.command);
@@ -140,11 +140,11 @@ var Template = Module("Template", {
 
                 let obj = params.eventTarget;
                 let events = obj[this.getAttribute("events") || "events"];
-                if (Set.has(events, "input"))
+                if (hasOwnProperty(events, "input"))
                     events["dactyl-input"] = events["input"];
 
                 for (let [event, handler] in Iterator(events))
-                    node.addEventListener(event, util.wrapCallback(obj.closure(handler), true), false);
+                    node.addEventListener(event, util.wrapCallback(handler.bind(obj), true), false);
             }
         })
     },
@@ -155,7 +155,7 @@ var Template = Module("Template", {
 
         let res = [];
         let n = 0;
-        for each (let i in Iterator(iter)) {
+        for (let i in Iterator(iter)) {
             let val = func(i, n);
             if (val == undefined)
                 continue;
@@ -168,12 +168,11 @@ var Template = Module("Template", {
         return res;
     },
 
-
     bookmarkDescription: function (item, text) [
         !(item.extra && item.extra.length) ? [] :
         ["span", { highlight: "URLExtra" },
             " (",
-            template.map(item.extra, function (e)
+            template.map(item.extra, e =>
                 ["", e[0], ": ",
                  ["span", { highlight: e[2] }, e[1]]],
                 "\u00a0"),
@@ -220,7 +219,7 @@ var Template = Module("Template", {
         else if (/^n_/.test(topic))
             topic = topic.slice(2);
 
-        if (help.initialized && !Set.has(help.tags, topic))
+        if (help.initialized && !hasOwnProperty(help.tags, topic))
             return ["span", { highlight: type || ""}, text || token];
 
         type = type || (/^'.*'$/.test(token)   ? "HelpOpt" :
@@ -242,7 +241,7 @@ var Template = Module("Template", {
         else if (/^n_/.test(topic))
             topic = topic.slice(2);
 
-        if (help.initialized && !Set.has(help.tags, topic))
+        if (help.initialized && !hasOwnProperty(help.tags, topic))
             return token;
 
         let tag = (/^'.*'$/.test(token)            ? "o" :
@@ -253,42 +252,23 @@ var Template = Module("Template", {
         return [tag, { xmlns: "dactyl" }, topic];
     },
     linkifyHelp: function linkifyHelp(str, help) {
-        let re = util.regexp(literal(/*
+        let re = util.regexp(literal(function () /*
             (?P<pre> [/\s]|^)
             (?P<tag> '[\w-]+' | :(?:[\w-]+!?|!) | (?:._)?<[\w-]+>\w* | \b[a-zA-Z]_(?:[\w[\]]+|.) | \[[\w-;]+\] | E\d{3} )
             (?=      [[\)!,:;./\s]|$)
-        */), "gx");
+        */$), "gx");
         return this.highlightSubstrings(str, (function () {
             for (let res in re.iterate(str))
                 yield [res.index + res.pre.length, res.tag.length];
         })(), this[help ? "HelpLink" : "helpLink"]);
     },
 
-
-    // Fixes some strange stack rewinds on NS_ERROR_OUT_OF_MEMORY
-    // exceptions that we can't catch.
-    stringify: function stringify(arg) {
-        if (!callable(arg))
-            return String(arg);
-
-        try {
-            this._sandbox.arg = arg;
-            return Cu.evalInSandbox("String(arg)", this._sandbox);
-        }
-        finally {
-            this._sandbox.arg = null;
-        }
-    },
-
-    _sandbox: Class.Memoize(function () Cu.Sandbox(Cu.getGlobalForObject(global),
-                                                   { wantXrays: false })),
-
     // if "processStrings" is true, any passed strings will be surrounded by " and
     // any line breaks are displayed as \n
     highlight: function highlight(arg, processStrings, clip, bw) {
         // some objects like window.JSON or getBrowsers()._browsers need the try/catch
         try {
-            let str = this.stringify(arg);
+            let str = String(arg);
             if (clip)
                 str = util.clip(str, clip);
             switch (arg == null ? "undefined" : typeof arg) {
@@ -405,7 +385,7 @@ var Template = Module("Template", {
                     ["th", {}, _("title.VPos")],
                     ["th", {}, _("title.Title")],
                     ["th", {}, _("title.URI")]],
-                this.map(Iterator(elems), function ([idx, val])
+                this.map(Iterator(elems), ([idx, val]) =>
                     ["tr", {},
                         ["td", { class: "indicator" }, idx == index ? ">" : ""],
                         ["td", {}, Math.abs(idx - index)],
@@ -417,12 +397,11 @@ var Template = Module("Template", {
                                 util.losslessDecodeURI(val.URI.spec)]]])];
     },
 
-
     options: function options(title, opts, verbose) {
         return ["table", {},
                 ["tr", { highlight: "Title", align: "left" },
                     ["th", {}, "--- " + title + " ---"]],
-                this.map(opts, function (opt)
+                this.map(opts, opt =>
                     ["tr", {},
                         ["td", {},
                             ["div", { highlight: "Message" },
@@ -449,7 +428,7 @@ var Template = Module("Template", {
         let table = ["table", {},
             ["tr", { highlight: "Title", align: "left" },
                 ["th", { colspan: "2" }, title]],
-            this.map(data, function (datum)
+            this.map(data, datum =>
                 ["tr", {},
                     ["td", { style: "font-weight: bold; min-width: 150px; padding-left: " + (indent || "2ex") }, datum[0]],
                     ["td", {}, datum[1]]])];
@@ -459,26 +438,22 @@ var Template = Module("Template", {
     },
 
     tabular: function tabular(headings, style, iter) {
-        let self = this;
         // TODO: This might be mind-bogglingly slow. We'll see.
         return ["table", {},
             ["tr", { highlight: "Title", align: "left" },
                 this.map(headings, function (h)
                     ["th", {}, h])],
-            this.map(iter, function (row)
+            this.map(iter, (row) =>
                 ["tr", {},
-                    self.map(Iterator(row), function ([i, d])
+                    this.map(Iterator(row), ([i, d]) =>
                         ["td", { style: style[i] || "" }, d])])];
     },
 
-    usage: function usage(iter, format) {
-        let self = this;
-
-        format = format || {};
-        let desc = format.description || function (item) self.linkifyHelp(item.description);
-        let help = format.help || function (item) item.name;
-        function sourceLink(frame) {
-            let source = self.sourceLink(frame);
+    usage: function usage(iter, format={}) {
+        let desc = format.description || (item => this.linkifyHelp(item.description));
+        let help = format.help || (item => item.name);
+        let sourceLink = (frame) => {
+            let source = this.sourceLink(frame);
             source[1]["dactyl:hint"] = source[2];
             return source;
         }
@@ -486,29 +461,29 @@ var Template = Module("Template", {
             format.headings ?
                 ["thead", { highlight: "UsageHead" },
                     ["tr", { highlight: "Title", align: "left" },
-                        this.map(format.headings, function (h) ["th", {}, h])]] :
+                        this.map(format.headings, (h) => ["th", {}, h])]] :
                 [],
             format.columns ?
                 ["colgroup", {},
-                    this.map(format.columns, function (c) ["col", { style: c }])] :
+                    this.map(format.columns, (c) => ["col", { style: c }])] :
                 [],
             ["tbody", { highlight: "UsageBody" },
-                this.map(iter, function (item)
+                this.map(iter, (item) =>
                     // Urgh.
                     let (name = item.name || item.names[0], frame = item.definedAt)
                         ["tr", { highlight: "UsageItem" },
                             ["td", { style: "padding-right: 2em;" },
                                 ["span", { highlight: "Usage Link" },
                                     !frame ? name :
-                                        [self.helpLink(help(item), name, "Title"),
+                                        [this.helpLink(help(item), name, "Title"),
                                          ["span", { highlight: "LinkInfo" },
                                             _("io.definedAt"), " ",
                                             sourceLink(frame)]]]],
-                            item.columns ? self.map(item.columns, function (c) ["td", {}, c]) : [],
-                            ["td", {}, desc(item)]])]]
+                            item.columns ? this.map(item.columns, (c) => ["td", {}, c]) : [],
+                            ["td", {}, desc(item)]])]];
     }
 });
 
 endModule();
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

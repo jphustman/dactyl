@@ -1,4 +1,4 @@
-// Copyright (c) 2010-2011 by Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2010-2014 by Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -15,11 +15,13 @@ function module(uri) Cu.import(uri, {});
 
 const DEBUG = true;
 
-__defineGetter__("BOOTSTRAP", function () "resource://" + moduleName + "/bootstrap.jsm");
+__defineGetter__("BOOTSTRAP", () => "resource://" + moduleName + "/bootstrap.jsm");
 
 var { AddonManager } = module("resource://gre/modules/AddonManager.jsm");
 var { XPCOMUtils }   = module("resource://gre/modules/XPCOMUtils.jsm");
 var { Services }     = module("resource://gre/modules/Services.jsm");
+
+var Timer = Components.Constructor("@mozilla.org/timer;1", "nsITimer", "initWithCallback");
 
 const resourceProto = Services.io.getProtocolHandler("resource")
                               .QueryInterface(Ci.nsIResProtocolHandler);
@@ -37,9 +39,9 @@ function reportError(e) {
     Cc["@mozilla.org/consoleservice;1"].getService(Ci.nsIConsoleService)
                                        .logStringMessage(stack);
 }
-function debug() {
+function debug(...args) {
     if (DEBUG)
-        dump(name + ": " + Array.join(arguments, ", ") + "\n");
+        dump(name + ": " + args.join(", ") + "\n");
 }
 
 function httpGet(uri) {
@@ -57,13 +59,11 @@ let addonData = null;
 let basePath = null;
 let bootstrap;
 let bootstrap_jsm;
-let categories = [];
 let components = {};
-let resources = [];
 let getURI = null;
 
 let JSMLoader = {
-    SANDBOX: Cu.nukeSandbox && false,
+    SANDBOX: Cu.nukeSandbox,
 
     get addon() addon,
 
@@ -103,7 +103,7 @@ let JSMLoader = {
             return resourceProto.resolveURI(uri);
 
         let chan = Services.io.newChannelFromURI(uri);
-        try { chan.cancel(Cr.NS_BINDING_ABORTED) } catch (e) {}
+        try { chan.cancel(Cr.NS_BINDING_ABORTED); } catch (e) {}
         return chan.name;
     },
 
@@ -125,7 +125,7 @@ let JSMLoader = {
     _load: function _load(name, target) {
         let urls = [name];
         if (name.indexOf(":") === -1)
-            urls = this.config["module-paths"].map(function (path) path + name + ".jsm");
+            urls = this.config["module-paths"].map(path => path + name + ".jsm");
 
         for each (let url in urls)
             try {
@@ -134,7 +134,7 @@ let JSMLoader = {
                     return this.modules[name] = this.globals[uri];
 
                 this.globals[uri] = this.modules[name];
-                bootstrap_jsm.loadSubScript(url, this.modules[name]);
+                bootstrap_jsm.loadSubScript(url, this.modules[name], "UTF-8");
                 return;
             }
             catch (e) {
@@ -172,7 +172,17 @@ let JSMLoader = {
         let module = this.modules[name];
         if (target)
             for each (let symbol in module.EXPORTED_SYMBOLS)
-                target[symbol] = module[symbol];
+                try {
+                    Object.defineProperty(target, symbol, {
+                        configurable: true,
+                        enumerable: true,
+                        writable: true,
+                        value: module[symbol]
+                    });
+                }
+                catch (e) {
+                    target[symbol] = module[symbol];
+                }
 
         return module;
     },
@@ -180,8 +190,8 @@ let JSMLoader = {
     // Cuts down on stupid, fscking url mangling.
     get loadSubScript() bootstrap_jsm.loadSubScript,
 
-    cleanup: function unregister() {
-        for each (let factory in this.factories.splice(0))
+    cleanup: function cleanup() {
+        for (let factory of this.factories.splice(0))
             manager.unregisterFactory(factory.classID, factory);
     },
 
@@ -215,60 +225,46 @@ let JSMLoader = {
 function init() {
     debug("bootstrap: init");
 
-    let manifestURI = getURI("chrome.manifest");
-    let manifest = httpGet(manifestURI)
-            .responseText
-            .replace(/#(resource)#/g, "$1")
-            .replace(/^\s*|\s*$|#.*/g, "")
-            .replace(/^\s*\n/gm, "");
+    let manifest = JSON.parse(httpGet(getURI("config.json"))
+                                .responseText);
 
-    for each (let line in manifest.split("\n")) {
-        let fields = line.split(/\s+/);
-        switch(fields[0]) {
-        case "category":
-            categoryManager.addCategoryEntry(fields[1], fields[2], fields[3], false, true);
-            categories.push([fields[1], fields[2]]);
-            break;
-        case "component":
-            components[fields[1]] = new FactoryProxy(getURI(fields[2]).spec, fields[1]);
-            break;
-        case "contract":
-            components[fields[2]].contractID = fields[1];
-            break;
+    if (!manifest.categories)
+        manifest.categories = [];
 
-        case "resource":
-            moduleName = moduleName || fields[1];
-            resources.push(fields[1]);
-            resourceProto.setSubstitution(fields[1], getURI(fields[2]));
-        }
+    for (let [classID, { contract, path, categories }] of Iterator(manifest.components || {})) {
+        components[classID] = new FactoryProxy(getURI(path).spec, classID, contract);
+        if (categories)
+            for (let [category, id] in Iterator(categories))
+                manifest.categories.push([category, id, contract]);
     }
 
-    JSMLoader.config = JSON.parse(httpGet("resource://dactyl-local/config.json").responseText);
+    for (let [category, id, value] of manifest.categories)
+        categoryManager.addCategoryEntry(category, id, value,
+                                         false, true);
+
+    for (let [pkg, path] in Iterator(manifest.resources || {})) {
+        moduleName = moduleName || pkg;
+        resourceProto.setSubstitution(pkg, getURI(path));
+    }
+
+    JSMLoader.config = manifest;
 
     bootstrap_jsm = module(BOOTSTRAP);
     if (!JSMLoader.SANDBOX)
         bootstrap = bootstrap_jsm;
     else {
         bootstrap = Cu.Sandbox(Cc["@mozilla.org/systemprincipal;1"].createInstance(),
-                               { sandboxName: BOOTSTRAP });
+                               { sandboxName: BOOTSTRAP,
+                                 metadata: { addonID: addon.id } });
         Services.scriptloader.loadSubScript(BOOTSTRAP, bootstrap);
     }
     bootstrap.require = JSMLoader.load("base").require;
 
-    // Flush the cache if necessary, just to be paranoid
     let pref = "extensions.dactyl.cacheFlushCheck";
     let val  = addon.version;
     if (!Services.prefs.prefHasUserValue(pref) || Services.prefs.getCharPref(pref) != val) {
         var cacheFlush = true;
-        Services.obs.notifyObservers(null, "startupcache-invalidate", "");
         Services.prefs.setCharPref(pref, val);
-    }
-
-    try {
-        //JSMLoader.load("disable-acr").init(addon.id);
-    }
-    catch (e) {
-        reportError(e);
     }
 
     Services.obs.notifyObservers(null, "dactyl-rehash", null);
@@ -326,7 +322,9 @@ function updateVersion() {
         // Disable automatic updates when switching to nightlies,
         // restore the default action when switching to stable.
         if (!config.lastVersion || isDev(config.lastVersion) != isDev(addon.version))
-            addon.applyBackgroundUpdates = AddonManager[isDev(addon.version) ? "AUTOUPDATE_DISABLE" : "AUTOUPDATE_DEFAULT"];
+            addon.applyBackgroundUpdates =
+                AddonManager[isDev(addon.version) ? "AUTOUPDATE_DISABLE"
+                                                  : "AUTOUPDATE_DEFAULT"];
     }
     catch (e) {
         reportError(e);
@@ -381,9 +379,10 @@ function startup(data, reason) {
  * @param {string} url The URL of the module housing the real factory.
  * @param {string} classID The CID of the class this factory represents.
  */
-function FactoryProxy(url, classID) {
+function FactoryProxy(url, classID, contractID) {
     this.url = url;
     this.classID = Components.ID(classID);
+    this.contractID = contractID;
 }
 FactoryProxy.prototype = {
     QueryInterface: XPCOMUtils.generateQI(Ci.nsIFactory),
@@ -405,18 +404,12 @@ FactoryProxy.prototype = {
     }
 }
 
+var timer;
 function shutdown(data, reason) {
     let strReason = reasonToString(reason);
     debug("bootstrap: shutdown " + strReason);
 
     if (reason != APP_SHUTDOWN) {
-        try {
-            //JSMLoader.load("disable-acr").cleanup(addon.id);
-        }
-        catch (e) {
-            reportError(e);
-        }
-
         if (~[ADDON_UPGRADE, ADDON_DOWNGRADE, ADDON_UNINSTALL].indexOf(reason))
             Services.obs.notifyObservers(null, "dactyl-purge", null);
 
@@ -426,17 +419,20 @@ function shutdown(data, reason) {
         JSMLoader.atexit(strReason);
         JSMLoader.cleanup(strReason);
 
-        if (JSMLoader.SANDBOX)
-            Cu.nukeSandbox(bootstrap);
-        bootstrap_jsm.require = null;
-        Cu.unload(BOOTSTRAP);
-        bootstrap = null;
-        bootstrap_jsm = null;
-
-        for each (let [category, entry] in categories)
+        for each (let [category, entry] in JSMLoader.config.categories)
             categoryManager.deleteCategoryEntry(category, entry, false);
-        for each (let resource in resources)
+        for (let resource in JSMLoader.config.resources)
             resourceProto.setSubstitution(resource, null);
+
+        timer = Timer(() => {
+            bootstrap_jsm.require = null;
+            if (JSMLoader.SANDBOX)
+                Cu.nukeSandbox(bootstrap);
+            else
+                Cu.unload(BOOTSTRAP);
+            bootstrap = null;
+            bootstrap_jsm = null;
+        }, 5000, Ci.nsITimer.TYPE_ONE_SHOT);
     }
 }
 

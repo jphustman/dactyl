@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -44,9 +44,9 @@ function NetError(orig, error) {
 
         originalURI: orig,
 
-        asyncOpen: function () { throw error || Cr.NS_ERROR_FILE_NOT_FOUND },
+        asyncOpen: function () { throw error || Cr.NS_ERROR_FILE_NOT_FOUND; },
 
-        open: function () { throw error || Cr.NS_ERROR_FILE_NOT_FOUND }
+        open: function () { throw error || Cr.NS_ERROR_FILE_NOT_FOUND; }
     }).data.QueryInterface(Ci.nsIChannel);
 }
 function RedirectChannel(to, orig, time, message) {
@@ -72,7 +72,7 @@ function Protocol(scheme, classID, contentBase) {
 
         contentBase: contentBase,
 
-        _xpcom_factory: JSMLoader.Factory(Protocol),
+        _xpcom_factory: JSMLoader.Factory(Protocol)
     };
     return Protocol;
 }
@@ -143,8 +143,8 @@ ProtocolBase.prototype = {
 };
 
 function LocaleChannel(pkg, locale, path, orig) {
-    for each (let locale in [locale, "en-US"])
-        for each (let sep in "-/") {
+    for (let locale of [locale, "en-US"])
+        for (let sep of "-/") {
             var channel = Channel(["resource:/", pkg + sep + locale, path].join("/"), orig, true, true);
             if (channel)
                 return channel;
@@ -190,7 +190,7 @@ function XMLChannel(uri, contentType, noErrorChannel, unprivileged) {
     let type = this.channel.contentType;
     if (/^text\/|[\/+]xml$/.test(type)) {
         let stream = services.InputStream(channelStream);
-        let [, pre, doctype, url, extra, open, post] = util.regexp(literal(/*
+        let [, pre, doctype, url, extra, open, post] = util.regexp(literal(function () /*
                 ^ ([^]*?)
                 (?:
                     (<!DOCTYPE \s+ \S+ \s+) (?:SYSTEM \s+ "([^"]*)" | ((?:[^[>\s]|\s[^[])*))
@@ -198,7 +198,7 @@ function XMLChannel(uri, contentType, noErrorChannel, unprivileged) {
                     ([^]*)
                 )?
                 $
-            */), "x").exec(stream.read(4096));
+            */$), "x").exec(stream.read(4096));
         this.writes.push(pre);
         if (doctype) {
             this.writes.push(doctype + (extra || "") + " [\n");
@@ -259,4 +259,4 @@ XMLChannel.prototype = {
 
 endModule();
 
-// vim: set fdm=marker sw=4 ts=4 et ft=javascript:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et ft=javascript:

@@ -532,9 +532,9 @@
         </p>
 
         <p>
-            The order is important, such that <se opt="complete"><str delim="">bsf</str></se> will
-            list bookmarks followed by matching quick searches and then
-            matching files.
+            The order is important, such that <se opt="complete">
+            <str delim="">bookmark,search,file</str></se> will list bookmarks
+            followed by matching quick searches and then matching files.
         </p>
 
         <note>
@@ -596,6 +596,9 @@
             <dt>time</dt>     <dd>Time remaining</dd>
             <dt>url</dt>      <dd>Source URL</dd>
         </dl>
+        <note>
+            This option is currently unavailable in &dactyl.host; 26 and greater.
+        </note>
     </description>
 </item>
 
@@ -882,7 +885,7 @@
     <description>
         <p>Change the hint matching algorithm used in Hints mode.</p>
 
-        <p>Possible values:</p>
+        <p>Possible values are one of:</p>
 
         <dl>
             <dt>contains</dt>
@@ -916,6 +919,9 @@
                 Delegate to the function
                 <tt>dactyl.plugins.customHintMatcher</tt>.
             </dd>
+        </dl>
+        <p>and optionally:</p>
+        <dl>
             <dt>transliterated</dt>
             <dd>
                 Certain alphanumeric characters are transliterated into their
@@ -931,7 +937,8 @@
     <strut/>
     <spec>'hinttags' 'ht'</spec>
     <type>&option.hinttags.type;</type>
-    <default>:-moz-any-link,area,button,iframe,input:not([type=hidden]),select,textarea,
+    <default>:-moz-any-link,area,button,iframe,input:not([type=hidden]),
+          label[for],select,textarea,
           [onclick],[onmouseover],[onmousedown],[onmouseup],[oncommand],
           [tabindex],[role=link],[role=button],[contenteditable=true]</default>
     <description>
@@ -1024,19 +1031,6 @@
     <default>&option.iskeyword.default;</default>
     <description>
         <p>Regular expression defining which characters constitute words.</p>
-    </description>
-</item>
-
-<item>
-    <tags>'nojsd' 'nojsdebugger'</tags>
-    <tags>'jsd' 'jsdebugger'</tags>
-    <spec>'jsdebugger' 'jsd'</spec>
-    <type>&option.jsdebugger.type;</type>
-    <default>&option.jsdebugger.default;</default>
-    <description>
-        <p>
-            Use the JavaScript debugger service for JavaScript completion.
-        </p>
     </description>
 </item>
 
@@ -1325,23 +1319,6 @@
             successively tested against each link in the page (as defined by
             <o>hinttags</o>, starting with the last), and the first link to
             match is followed.
-        </p>
-    </description>
-</item>
-
-<item>
-    <tags>'noprivate' 'private'</tags>
-    <spec>'private'</spec>
-    <type>&option.private.type;</type>
-    <default>&option.private.default;</default>
-    <description>
-        <p>
-            Set the <str>private browsing</str> option. In private browsing mode
-            history, cache files, cookies, form data, passwords, download list
-            entries, local and URL <t>marks</t>, <t>command-line</t> history
-            and macros are available only for the duration of the private
-            browsing session and deleted when returning to normal browsing
-            mode. See also <t>privacy</t>.
         </p>
     </description>
 </item>

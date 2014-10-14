@@ -1,6 +1,6 @@
 // Copyright (c) 2006-2008 by Martin Stubenschrott <stubenschrott@vimperator.org>
 // Copyright (c) 2007-2011 by Doug Kearns <dougkearns@gmail.com>
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k@gmail.com>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k@gmail.com>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -73,7 +73,7 @@ var Bookmarks = Module("bookmarks", {
         if (id != null)
             var bmark = bookmarkcache.bookmarks[id];
         else if (!force) {
-            if (keyword && Set.has(bookmarkcache.keywords, keyword))
+            if (keyword && hasOwnProperty(bookmarkcache.keywords, keyword))
                 bmark = bookmarkcache.keywords[keyword];
             else if (bookmarkcache.isBookmarked(uri))
                 for (bmark in bookmarkcache)
@@ -118,12 +118,14 @@ var Bookmarks = Module("bookmarks", {
      * @param {Element} elem A form element for which to add a keyword.
      */
     addSearchKeyword: function addSearchKeyword(elem) {
-        if (elem instanceof HTMLFormElement || elem.form)
+        if (elem instanceof Ci.nsIDOMHTMLFormElement || elem.form)
             var { url, postData, charset } = DOM(elem).formData;
         else
             var [url, postData, charset] = [elem.href || elem.src, null, elem.ownerDocument.characterSet];
 
-        let options = { "-title": "Search " + elem.ownerDocument.title };
+        let title = elem.title || elem instanceof Ci.nsIDOMHTMLAnchorElement && elem.textContent.trim();
+        let options = { "-title": title || "Search " + elem.ownerDocument.title };
+
         if (postData != null)
             options["-post"] = postData;
         if (charset != null && charset !== "UTF-8")
@@ -172,7 +174,7 @@ var Bookmarks = Module("bookmarks", {
         }
     },
 
-    isBookmarked: deprecated("bookmarkcache.isBookmarked", { get: function isBookmarked() bookmarkcache.closure.isBookmarked }),
+    isBookmarked: deprecated("bookmarkcache.isBookmarked", { get: function isBookmarked() bookmarkcache.bound.isBookmarked }),
 
     /**
      * Remove a bookmark or bookmarks. If *ids* is an array, removes the
@@ -189,7 +191,7 @@ var Bookmarks = Module("bookmarks", {
                 let uri = util.newURI(ids);
                 ids = services.bookmarks
                               .getBookmarkIdsForURI(uri, {})
-                              .filter(bookmarkcache.closure.isRegularBookmark);
+                              .filter(bookmarkcache.bound.isRegularBookmark);
             }
             ids.forEach(function (id) {
                 let bmark = bookmarkcache.bookmarks[id];
@@ -223,13 +225,38 @@ var Bookmarks = Module("bookmarks", {
             if (!alias)
                 alias = "search"; // for search engines which we can't find a suitable alias
 
-            if (Set.has(aliases, alias))
+            if (hasOwnProperty(aliases, alias))
                 alias += ++aliases[alias];
             else
                 aliases[alias] = 0;
 
             return [alias, { keyword: alias, __proto__: engine, title: engine.description, icon: engine.iconURI && engine.iconURI.spec }];
         }).toObject();
+    },
+
+    /**
+     * Returns true if the given search engine provides suggestions.
+     * engine based on the given *query*. The results are always in the
+     * form of an array of strings. If *callback* is provided, the
+     * request is executed asynchronously and *callback* is called on
+     * completion. Otherwise, the request is executed synchronously and
+     * the results are returned.
+     *
+     * @param {string} engineName The name of the search engine from
+     *      which to request suggestions.
+     * @returns {boolean}
+     */
+    hasSuggestions: function hasSuggestions(engineName, query, callback) {
+        const responseType = "application/x-suggestions+json";
+
+        if (hasOwnProperty(this.suggestionProviders, engineName))
+            return true;
+
+        let engine = hasOwnProperty(this.searchEngines, engineName) && this.searchEngines[engineName];
+        if (engine && engine.supportsResponseType(responseType))
+            return true;
+
+        return false;
     },
 
     /**
@@ -251,14 +278,15 @@ var Bookmarks = Module("bookmarks", {
     getSuggestions: function getSuggestions(engineName, query, callback) {
         const responseType = "application/x-suggestions+json";
 
-        if (Set.has(this.suggestionProviders, engineName))
+        if (hasOwnProperty(this.suggestionProviders, engineName))
             return this.suggestionProviders[engineName](query, callback);
 
-        let engine = Set.has(this.searchEngines, engineName) && this.searchEngines[engineName];
+        let engine = hasOwnProperty(this.searchEngines, engineName) && this.searchEngines[engineName];
         if (engine && engine.supportsResponseType(responseType))
             var queryURI = engine.getSubmission(query, responseType).uri.spec;
+
         if (!queryURI)
-            return (callback || util.identity)([]);
+            return Promise.reject();
 
         function parse(req) JSON.parse(req.responseText)[1].filter(isString);
         return this.makeSuggestions(queryURI, parse, callback);
@@ -271,25 +299,26 @@ var Bookmarks = Module("bookmarks", {
      * @param {string} url The URL to fetch.
      * @param {function(XMLHttpRequest):[string]} parser The function which
      *      parses the response.
+     * @returns {Promise<Array>}
      */
-    makeSuggestions: function makeSuggestions(url, parser, callback) {
-        function process(req) {
+    makeSuggestions: function makeSuggestions(url, parser) {
+        let deferred = Promise.defer();
+
+        let req = util.fetchUrl(url);
+        req.then(function process(req) {
             let results = [];
             try {
                 results = parser(req);
             }
             catch (e) {
-                util.reportError(e);
+                deferred.reject(e);
+                return;
             }
-            if (callback)
-                return callback(results);
-            return results;
-        }
+            deferred.resolve(results);
+        });
 
-        let req = util.httpGet(url, callback && process);
-        if (callback)
-            return req;
-        return process(req);
+        promises.oncancel(deferred, reason => promises.cancel(req, reason));
+        return deferred.promise;
     },
 
     suggestionProviders: {},
@@ -320,7 +349,7 @@ var Bookmarks = Module("bookmarks", {
             param = query.substr(offset + 1);
         }
 
-        var engine = Set.has(bookmarks.searchEngines, keyword) && bookmarks.searchEngines[keyword];
+        var engine = hasOwnProperty(bookmarks.searchEngines, keyword) && bookmarks.searchEngines[keyword];
         if (engine) {
             if (engine.searchForm && !param)
                 return engine.searchForm;
@@ -340,7 +369,8 @@ var Bookmarks = Module("bookmarks", {
                 [, url, charset] = matches;
             else
                 try {
-                    charset = services.history.getCharsetForURI(util.newURI(url));
+                    charset = services.annotation.getPageAnnotation(util.newURI(url),
+                                                                    PlacesUtils.CHARSET_ANNO);
                 }
                 catch (e) {}
 
@@ -349,8 +379,8 @@ var Bookmarks = Module("bookmarks", {
             else
                 encodedParam = bookmarkcache.keywords[keyword.toLowerCase()].encodeURIComponent(param);
 
-            url = url.replace(/%s/g, function () encodedParam)
-                     .replace(/%S/g, function () param);
+            url = url.replace(/%s/g, () => encodedParam)
+                     .replace(/%S/g, () => param);
             if (/%s/i.test(data))
                 postData = window.getPostDataStream(data, param, encodedParam, "application/x-www-form-urlencoded");
         }
@@ -388,7 +418,7 @@ var Bookmarks = Module("bookmarks", {
         let items = completion.runCompleter("bookmark", filter, maxItems, tags, extra);
 
         if (items.length)
-            return dactyl.open(items.map(function (i) i.url), dactyl.NEW_TAB);
+            return dactyl.open(items.map(i => i.url), dactyl.NEW_TAB);
 
         if (filter.length > 0 && tags.length > 0)
             dactyl.echoerr(_("bookmark.noMatching", tags.map(String.quote), filter.quote()));
@@ -408,7 +438,10 @@ var Bookmarks = Module("bookmarks", {
             names: ["-tags", "-T"],
             description: "A comma-separated list of tags",
             completer: function tags(context, args) {
-                context.generate = function () array(b.tags for (b in bookmarkcache) if (b.tags)).flatten().uniq().array;
+                context.generate = function () array(b.tags
+                                                     for (b in bookmarkcache)
+                                                     if (b.tags))
+                                                  .flatten().uniq().array;
                 context.keys = { text: util.identity, description: util.identity };
             },
             type: CommandOption.LIST
@@ -497,7 +530,7 @@ var Bookmarks = Module("bookmarks", {
                         description: "The character encoding of the bookmark",
                         type: CommandOption.STRING,
                         completer: function (context) completion.charset(context),
-                        validator: Option.validateCompleter
+                        validator: io.bound.validateCharset
                     },
                     {
                         names: ["-id"],
@@ -533,7 +566,7 @@ var Bookmarks = Module("bookmarks", {
             "Delete a bookmark",
             function (args) {
                 if (args.bang)
-                    commandline.input(_("bookmark.prompt.deleteAll") + " ",
+                    commandline.input(_("bookmark.prompt.deleteAll") + " ").then(
                         function (resp) {
                             if (resp && resp.match(/^y(es)?$/i)) {
                                 bookmarks.remove(Object.keys(bookmarkcache.bookmarks));
@@ -547,7 +580,9 @@ var Bookmarks = Module("bookmarks", {
                         let context = CompletionContext(args.join(" "));
                         context.fork("bookmark", 0, completion, "bookmark",
                                      args["-tags"], { keyword: args["-keyword"], title: args["-title"] });
-                        deletedCount = bookmarks.remove(context.allItems.items.map(function (item) item.item.id));
+
+                        deletedCount = bookmarks.remove(context.allItems.items
+                                                               .map(item => item.item.id));
                     }
 
                     dactyl.echomsg({ message: _("bookmark.deleted", deletedCount) });
@@ -574,7 +609,7 @@ var Bookmarks = Module("bookmarks", {
                 let options = {};
 
                 let url = buffer.uri.spec;
-                let bmarks = bookmarks.get(url).filter(function (bmark) bmark.url == url);
+                let bmarks = bookmarks.get(url).filter(bmark => bmark.url == url);
 
                 if (bmarks.length == 1) {
                     let bmark = bmarks[0];
@@ -623,14 +658,14 @@ var Bookmarks = Module("bookmarks", {
     },
 
     completion: function initCompletion() {
-        completion.bookmark = function bookmark(context, tags, extra) {
+        completion.bookmark = function bookmark(context, tags, extra={}) {
             context.title = ["Bookmark", "Title"];
             context.format = bookmarks.format;
-            iter(extra || {}).forEach(function ([k, v]) {
+            iter(extra).forEach(function ([k, v]) {
                 if (v != null)
                     context.filters.push(function (item) item.item[k] != null && this.matchString(v, item.item[k]));
             });
-            context.generate = function () values(bookmarkcache.bookmarks);
+            context.generate = () => values(bookmarkcache.bookmarks);
             completion.urls(context, tags);
         };
 
@@ -650,7 +685,7 @@ var Bookmarks = Module("bookmarks", {
                          keyword, true);
 
             let item = keywords[keyword];
-            if (item && item.url.indexOf("%s") > -1)
+            if (item && item.url.contains("%s"))
                 context.fork("keyword/" + keyword, keyword.length + space.length, null, function (context) {
                     context.format = history.format;
                     context.title = [/*L*/keyword + " Quick Search"];
@@ -663,9 +698,9 @@ var Bookmarks = Module("bookmarks", {
                         return history.get({ uri: util.newURI(begin), uriIsPrefix: true }).map(function (item) {
                             let rest = item.url.length - end.length;
                             let query = item.url.substring(begin.length, rest);
-                            if (item.url.substr(rest) == end && query.indexOf("&") == -1)
+                            if (item.url.substr(rest) == end && query.contains("&"))
                                 try {
-                                    item.url = decodeURIComponent(query.replace(/#.*/, "").replace(/\+/g, " "));
+                                    item.url = decodeURIComponent(query.replace(/[&#].*/, "").replace(/\+/g, " "));
                                     return item;
                                 }
                                 catch (e) {}
@@ -680,7 +715,7 @@ var Bookmarks = Module("bookmarks", {
              context.keys = { text: "keyword", description: "title", icon: "icon" };
              context.completions = values(bookmarks.searchEngines);
              if (suggest)
-                 context.filters.push(function ({ item }) item.supportsResponseType("application/x-suggestions+json"));
+                 context.filters.push(({ item }) => item.supportsResponseType("application/x-suggestions+json"));
 
         };
 
@@ -691,16 +726,19 @@ var Bookmarks = Module("bookmarks", {
             let engineList = (engineAliases || options["suggestengines"].join(",") || "google").split(",");
 
             engineList.forEach(function (name) {
+                if (!bookmarks.hasSuggestions(name))
+                    return;
+
                 var desc = name;
                 let engine = bookmarks.searchEngines[name];
                 if (engine)
-                    var desc = engine.description;
-                else if (!Set.has(bookmarks.suggestionProviders, name))
-                    return;
+                    desc = engine.description;
+
 
                 let [, word] = /^\s*(\S+)/.exec(context.filter) || [];
                 if (!kludge && word == name) // FIXME: Check for matching keywords
                     return;
+
                 let ctxt = context.fork(name, 0);
 
                 ctxt.title = [/*L*/desc + " Suggestions"];
@@ -712,14 +750,20 @@ var Bookmarks = Module("bookmarks", {
                     return;
 
                 let words = ctxt.filter.toLowerCase().split(/\s+/g);
-                ctxt.completions = ctxt.completions.filter(function (i) words.every(function (w) i.toLowerCase().indexOf(w) >= 0));
+                ctxt.completions = ctxt.completions.filter(i => words.every(w => i.toLowerCase().contains(w)));
 
                 ctxt.hasItems = ctxt.completions.length;
                 ctxt.incomplete = true;
-                ctxt.cache.request = bookmarks.getSuggestions(name, ctxt.filter, function (compl) {
+                ctxt.cache.request = bookmarks.getSuggestions(name, ctxt.filter);
+                ctxt.cache.request.then(function (compl) {
                     ctxt.incomplete = false;
-                    ctxt.completions = array.uniq(ctxt.completions.filter(function (c) compl.indexOf(c) >= 0)
+                    ctxt.completions = array.uniq(ctxt.completions.filter(c => ~compl.indexOf(c))
                                                       .concat(compl), true);
+                }).catch(function (e) {
+                    ctxt.incomplete = false;
+                    ctxt.completions = [];
+                    if (e)
+                        Cu.reportError(e);
                 });
             });
         };
@@ -730,4 +774,4 @@ var Bookmarks = Module("bookmarks", {
     }
 });
 
-// vim: set fdm=marker sw=4 ts=4 et:
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:

@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2012 Kris Maglione <maglione.k at Gmail>
+// Copyright (c) 2008-2014 Kris Maglione <maglione.k at Gmail>
 //
 // This work is licensed for reuse under an MIT license. Details are
 // given in the LICENSE.txt file included with this file.
@@ -20,11 +20,11 @@ var ProcessorStack = Class("ProcessorStack", {
         this.modes = array([mode.params.keyModes, main, mode.main.allBases.slice(1)]).flatten().compact();
 
         if (builtin)
-            hives = hives.filter(function (h) h.name === "builtin");
+            hives = hives.filter(h => h.name === "builtin");
 
-        this.processors = this.modes.map(function (m) hives.map(function (h) KeyProcessor(m, h)))
+        this.processors = this.modes.map(m => hives.map(h => KeyProcessor(m, h)))
                                     .flatten().array;
-        this.ownsBuffer = !this.processors.some(function (p) p.main.ownsBuffer);
+        this.ownsBuffer = !this.processors.some(p => p.main.ownsBuffer);
 
         for (let [i, input] in Iterator(this.processors)) {
             let params = input.main.params;
@@ -77,7 +77,7 @@ var ProcessorStack = Class("ProcessorStack", {
         if (this.ownsBuffer)
             statusline.inputBuffer = this.processors.length ? this.buffer : "";
 
-        if (!this.processors.some(function (p) !p.extended) && this.actions.length) {
+        if (!this.processors.some(p => !p.extended) && this.actions.length) {
             // We have matching actions and no processors other than
             // those waiting on further arguments. Execute actions as
             // long as they continue to return PASS.
@@ -107,8 +107,8 @@ var ProcessorStack = Class("ProcessorStack", {
                 this.timer = services.Timer(this, options["timeoutlen"], services.Timer.TYPE_ONE_SHOT);
         }
         else if (result !== Events.KILL && !this.actions.length &&
-                 !(this.events[0].isReplay || this.passUnknown
-                   || this.modes.some(function (m) m.passEvent(this), this.events[0]))) {
+                 !(this.events[0].isReplay || this.passUnknown ||
+                   this.modes.some(function (m) m.passEvent(this), this.events[0]))) {
             // No patching processors, this isn't a fake, pass-through
             // event, we're not in pass-through mode, and we're not
             // choosing to pass unknown keys. Kill the event and beep.
@@ -134,17 +134,17 @@ var ProcessorStack = Class("ProcessorStack", {
             events.passing = true;
 
         if (result === Events.PASS_THROUGH && this.keyEvents.length)
-            events.dbg("PASS_THROUGH:\n\t" + this.keyEvents.map(function (e) [e.type, DOM.Event.stringify(e)]).join("\n\t"));
+            events.dbg("PASS_THROUGH:\n\t" + this.keyEvents.map(e => [e.type, DOM.Event.stringify(e)]).join("\n\t"));
 
         if (result === Events.PASS_THROUGH)
             events.feedevents(null, this.keyEvents, { skipmap: true, isMacro: true, isReplay: true });
         else {
-            let list = this.events.filter(function (e) e.getPreventDefault() && !e.dactylDefaultPrevented);
+            let list = this.events.filter(e => e.defaultPrevented && !e.dactylDefaultPrevented);
 
             if (result === Events.PASS)
-                events.dbg("PASS THROUGH: " + list.slice(0, length).filter(function (e) e.type === "keypress").map(DOM.Event.closure.stringify));
+                events.dbg("PASS THROUGH: " + list.slice(0, length).filter(e => e.type === "keypress").map(DOM.Event.bound.stringify));
             if (list.length > length)
-                events.dbg("REFEED: " + list.slice(length).filter(function (e) e.type === "keypress").map(DOM.Event.closure.stringify));
+                events.dbg("REFEED: " + list.slice(length).filter(e => e.type === "keypress").map(DOM.Event.bound.stringify));
 
             if (result === Events.PASS)
                 events.feedevents(null, list.slice(0, length), { skipmap: true, isMacro: true, isReplay: true });
@@ -190,7 +190,7 @@ var ProcessorStack = Class("ProcessorStack", {
                 processors.push(res);
         }
 
-        events.dbg("RESULT: " + event.getPreventDefault() + " " + this._result(result));
+        events.dbg("RESULT: " + event.defaultPrevented + " " + this._result(result));
         events.dbg("ACTIONS: " + actions.length + " " + this.actions.length);
         events.dbg("PROCESSORS:", processors, "\n");
 
@@ -250,18 +250,17 @@ var KeyProcessor = Class("KeyProcessor", {
     },
 
     execute: function execute(map, args)
-        let (self = this)
-            function execute() {
-                if (self.preExecute)
-                    self.preExecute.apply(self, args);
+        () => {
+            if (this.preExecute)
+                this.preExecute.apply(this, args);
 
-                args.self = self.main.params.mappingSelf || self.main.mappingSelf || map;
-                let res = map.execute.call(map, args);
+            args.self = this.main.params.mappingSelf || this.main.mappingSelf || map;
+            let res = map.execute.call(map, args);
 
-                if (self.postExecute)
-                    self.postExecute.apply(self, args);
-                return res;
-            },
+            if (this.postExecute)
+                this.postExecute.apply(this, args);
+            return res;
+        },
 
     onKeyPress: function onKeyPress(event) {
         if (event.skipmap)
@@ -322,3 +321,4 @@ var KeyArgProcessor = Class("KeyArgProcessor", KeyProcessor, {
     }
 });
 
+// vim: set fdm=marker sw=4 sts=4 ts=8 et:
